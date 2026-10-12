@@ -195,6 +195,11 @@ eight service/receipt checks are reported separately from zero fleet writer
 moves. This qualifies an in-process reader/follower combination; busy primitive
 owners, process/provider failures and reboot remain required by the fleet plan.
 
+A live role change during a follower-policy inventory scan invalidates that
+observation. The reference observer discards its role and policy proofs and
+keeps maintenance blocked until a fresh complete pass succeeds. Fencing,
+transport and authority failures retain their original source errors.
+
 The overload command creates three independently leased CellNodes over shared
 strict in-memory object storage, initializes twelve real SQLite Cells, and acknowledges a command
 on each. A held seven-GiB disk admission token causes the existing actor's

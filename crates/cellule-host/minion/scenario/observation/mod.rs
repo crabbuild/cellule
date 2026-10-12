@@ -7,7 +7,7 @@ use cellule_host::fleet::{
     FleetFollowerEvacuationVerifier, FleetFollowerReferences, FleetMaintenanceEnrollments,
     FleetNodeInventory, FleetNodeInventoryScan, FleetNodeSnapshot, FleetObservation,
     FleetOwnedCell, FleetRoleCoverage, FleetRoster, FleetSnapshotNativePage, FleetSnapshotRequest,
-    FleetSnapshotSubject,
+    FleetSnapshotSubject, FleetSnapshotTransport,
 };
 use cellule_runtime::control::{Control, ControlState};
 use cellule_runtime::fleet::operations::{
@@ -51,7 +51,24 @@ pub(super) async fn observe(
     roster: &FleetRoster,
     deadline: Instant,
 ) -> JournalResult<FleetObservation> {
-    observe_inner(fleet, roster, deadline, None).await
+    observe_inner(
+        fleet,
+        roster,
+        deadline,
+        None,
+        Arc::new(adapters::LocalSnapshots::new(fleet.nodes.clone())),
+    )
+    .await
+}
+
+#[cfg(test)]
+pub(super) async fn observe_with_snapshots(
+    fleet: &adapters::LocalFleet,
+    roster: &FleetRoster,
+    deadline: Instant,
+    snapshots: Arc<dyn FleetSnapshotTransport>,
+) -> JournalResult<FleetObservation> {
+    observe_inner(fleet, roster, deadline, None, snapshots).await
 }
 
 pub(super) async fn observe_with_failed_boot_closure(
@@ -67,6 +84,7 @@ pub(super) async fn observe_with_failed_boot_closure(
         roster,
         deadline,
         Some((request, processes, claimant)),
+        Arc::new(adapters::LocalSnapshots::new(fleet.nodes.clone())),
     )
     .await
 }
@@ -80,8 +98,9 @@ async fn observe_inner(
         &dyn FleetFailedBootProcesses,
         SessionId,
     )>,
+    snapshots: Arc<dyn FleetSnapshotTransport>,
 ) -> JournalResult<FleetObservation> {
-    let capture = collect(fleet, roster, deadline).await?;
+    let mut capture = collect(fleet, roster, deadline).await?;
     let mut reader_checks = Vec::new();
     let mut follower_checks = Vec::new();
     let mut finished = capture.finished;
@@ -91,13 +110,23 @@ async fn observe_inner(
                 .collect_maintenance(fleet.journal.as_ref(), original, roster, deadline, clock)
                 .await?;
         }
-        let follower_verifier = FleetFollowerEvacuationVerifier::new(
-            fleet.boots[0].directory.clone(),
-            Arc::new(adapters::LocalSnapshots::new(fleet.nodes.clone())),
-        );
-        follower_checks = follower_verifier
+        let follower_verifier =
+            FleetFollowerEvacuationVerifier::new(fleet.boots[0].directory.clone(), snapshots);
+        match follower_verifier
             .collect_maintenance(fleet.journal.as_ref(), original, roster, deadline, clock)
-            .await?;
+            .await
+        {
+            Ok(checks) => follower_checks = checks,
+            Err(cellule_runtime::Error::Node("native inventory category changed")) => {
+                // A live role change invalidates this interval, not the fleet.
+                // Discard its proofs; the next driver pass must collect them
+                // afresh before maintenance can settle or finalize any boot.
+                capture.complete = false;
+                capture.role_coverage = None;
+                reader_checks.clear();
+            }
+            Err(source) => return Err(source.into()),
+        }
         roster.confirm(fleet.journal.as_ref(), deadline).await?;
         finished = clock()?;
     }

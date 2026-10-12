@@ -72,6 +72,26 @@ before/after evidence remain under `cellule-ltx-open-wave-20261012-v43`.
 This test fixture change leaves production admission limits and the prepared
 performance binaries unchanged.
 
+Rust CI run `38292326937` at `df37b68` passes the workspace tests, then fails
+the original combined maintenance scenario with
+`Node("native inventory category changed")` during observer confirmation.
+A held native recheck and real second-Cell activation reproduce that error
+5/5 times. The reference observer now discards that interval's role and policy
+proofs, leaves maintenance blocked, and requires a fresh complete collection.
+The seven-category verifier and its fencing/authority checks remain unchanged.
+
+Both the invalidated-inventory and fenced-node source-error tests pass 20
+repeats, and both original maintenance scenarios pass 10 repeats. Strict
+example/test Clippy passes. The broader persisted-observer suite records
+27 passes and two failures: a snapshot interval refusal in the new test's
+fresh observation, and an operational sample timestamp ahead of its
+advertisement in the real-expiry restart test. Both remain retained and open;
+the full suite is not qualified. Evidence remains under
+`cellule-maintenance-inventory-20261012-v46`. This diagnoses the fresh inventory
+race, not the original unlogged intermittent maintenance `Fenced` cause.
+Only the reference example/tests/docs change; prepared SQL benchmark code and
+all performance gates remain unchanged.
+
 ## Fresh hosted routing comparison
 
 October 12, 2026 UTC. Compose run `38274456201`, attempt 1, compares main
@@ -121,6 +141,40 @@ all 1,317 runtime tests and doctests pass with all features. Strict all-target
 runtime Clippy passes. Original CI logs and both local runs remain under
 `cellule-recovery-retry-20261012-v36`. This is a recovery correctness fix;
 the original intermittent maintenance `Fenced` cause remains unproved.
+
+## Fresh hosted routing repeats
+
+October 12, 2026 UTC. The newest Compose run `38292326894` completes four
+alternating pairs with main `c79834d` and merge `0820461` (PR head `df37b68`).
+Both measured binaries are byte-identical to runs `38286916365` and
+`38289876505`; only test fixtures and docs changed between these revisions.
+All 242,192 raw latency samples per mode and every four-run median reconcile
+in each run. The table reports the newest run, with invocation latency.
+
+| Leased lane, concurrency 16 | Main / PR operations per second | Main p50 / p95 / p99 | PR p50 / p95 / p99 |
+| --- | ---: | --- | --- |
+| Local writes | 541.56 / 543.36 | 27.93 / 40.21 / 46.86 ms | 28.00 / 39.97 / 45.16 ms |
+| Forwarded writes | 432.28 / 430.42 | 34.19 / 46.06 / 49.30 ms | 34.15 / 46.17 / 49.53 ms |
+| Local warm reads | 12,037.26 / 12,129.43 | 0.686 / 1.248 / 1.373 ms | 0.680 / 1.238 / 1.343 ms |
+| Forwarded warm reads | 3,604.01 / 3,539.87 | 2.424 / 4.288 / 5.396 ms | 2.463 / 4.464 / 5.877 ms |
+
+The paired signs vary across hosted runs on identical binaries:
+
+| Run, four alternating pairs | Local write throughput / p99 change | Forwarded write throughput / p99 change |
+| --- | ---: | ---: |
+| `38286916365` | -1.65% / +7.24% | +6.59% / -21.68% |
+| `38289876505` | -0.79% / +7.12% | -3.65% / +1.00% |
+| `38292326894` | +0.33% / -3.62% | -0.43% / +0.46% |
+
+Both original gates pass in the newest run; its expired-burst forwarded-query
+lane retains a p95 alert (1.103 times main). Passing those gates does not establish an improvement.
+All lanes, object-only results, samples, binaries and manifests remain retained
+under `cellule-ci-routing-df-20261012-v48`, with the earlier runs under
+`cellule-ci-routing-48-20261012-v44` and `cellule-ci-routing-14-20261012-v47`.
+[The newest CI run](https://github.com/crabbuild/cellule/actions/runs/38292326894)
+uses per-cell roots and does not qualify the three-VM shared-log workload.
+The matched idle-host capacity comparison and conditional rollback decision
+remain open.
 
 ## Latest 750-write/s PR #76 verification
 

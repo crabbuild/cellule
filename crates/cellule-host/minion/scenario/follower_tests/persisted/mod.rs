@@ -10,6 +10,7 @@ use cellule_host::{
 };
 use cellule_runtime::fleet::operations::{FollowerEvacuationRecord, FollowerReplacementPolicy};
 mod cancelled_settlement;
+mod inventory_change;
 mod maintenance;
 mod observation;
 mod races;
