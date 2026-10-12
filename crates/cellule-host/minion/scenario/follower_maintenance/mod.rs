@@ -123,8 +123,11 @@ pub(super) async fn run(
     // The driver owns cordon and evacuation transitions. No fixture writes a
     // ready-to-close row or an invented native role proof.
     loop {
-        let report = Box::pin(driver.reconcile_once(clock, deadline())).await?;
-        checked_report(&report)?;
+        let phase = "follower-maintenance-enter-evacuation";
+        let report = Box::pin(driver.reconcile_once(clock, deadline()))
+            .await
+            .map_err(|source| failure(phase, source))?;
+        checked_report(phase, &report)?;
         for blocker in report.blockers {
             if !blockers.contains(&blocker) {
                 blockers.push(blocker);
@@ -145,14 +148,18 @@ pub(super) async fn run(
     }
     boots[1]
         .refresh_capacity(1, journal.as_ref(), deadline())
-        .await?;
+        .await
+        .map_err(|source| failure("follower-maintenance-donor-refresh", source))?;
     if nodes[1].state() == NodeState::Stopped || !nodes[1].is_management_ready() {
         return Err(invalid("follower source stopped before replacement"));
     }
     // The missing replacement remains an explicit policy blocker and cannot
     // retire an uncovered original follower or authorize native Finalize.
-    let blocked = Box::pin(driver.reconcile_once(clock, deadline())).await?;
-    checked_report(&blocked)?;
+    let phase = "follower-maintenance-await-follower-policy";
+    let blocked = Box::pin(driver.reconcile_once(clock, deadline()))
+        .await
+        .map_err(|source| failure(phase, source))?;
+    checked_report(phase, &blocked)?;
     if blocked
         .snapshot
         .head()
@@ -173,7 +180,10 @@ pub(super) async fn run(
         }
     }
     if let Some(readers) = &inputs.readers {
-        readers.check_original(&journal, true).await?;
+        readers
+            .check_original(&journal, true)
+            .await
+            .map_err(|source| failure("follower-maintenance-original-reader", source))?;
     }
     let store = nodes[1]
         .try_owned_component::<FollowerStore>(cellule_host::FOLLOWER_STORE_COMPONENT)?
@@ -197,11 +207,13 @@ pub(super) async fn run(
     // blocks finalization despite the donor having zero local writers.
     boots[3]
         .refresh_capacity(3, journal.as_ref(), deadline())
-        .await?;
+        .await
+        .map_err(|source| failure("follower-maintenance-spare-refresh", source))?;
     let selected = boots[0]
         .directory
         .select_log_members(session(0), 1, clock()?, 4)
-        .await?;
+        .await
+        .map_err(|source| failure("follower-maintenance-select-members", source))?;
     if selected != [node_id(2), node_id(3)] {
         return Err(invalid(
             "follower replacement selection includes the donor or lacks redundancy",
@@ -210,8 +222,15 @@ pub(super) async fn run(
     // This canonical actor barrier covers every acknowledged frame before the
     // existing supervisor fences each old member and closes the original epoch.
     inputs.coverage_hold.release();
-    inputs.acknowledged.source.drain().await?;
-    let request = nodes[0].request_node_log_rotation(1)?;
+    inputs
+        .acknowledged
+        .source
+        .drain()
+        .await
+        .map_err(|source| failure("follower-maintenance-original-source-drain", source))?;
+    let request = nodes[0]
+        .request_node_log_rotation(1)
+        .map_err(|source| failure("follower-maintenance-request-rotation", source))?;
     let completion = tokio::time::timeout_at(deadline(), async {
         loop {
             let observed = request.observe()?;
@@ -230,7 +249,9 @@ pub(super) async fn run(
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
-    .await??;
+    .await
+    .map_err(|source| failure("follower-maintenance-rotation-wait", source))?
+    .map_err(|source| failure("follower-maintenance-rotation", source))?;
     if completion.retirement().barrier().covered_through() == 0
         || completion.replacement_epoch() != 2
     {
@@ -288,29 +309,48 @@ pub(super) async fn run(
     let record = publication.record()?;
     let reader_capture = if let Some(readers) = &inputs.readers {
         // A follower proof alone cannot close a donor that also owns a reader.
-        let blocked = Box::pin(driver.reconcile_once(clock, deadline())).await?;
-        checked_report(&blocked)?;
+        let phase = "follower-maintenance-await-reader-policy";
+        let blocked = Box::pin(driver.reconcile_once(clock, deadline()))
+            .await
+            .map_err(|source| failure(phase, source))?;
+        checked_report(phase, &blocked)?;
         readers
             .require_blocked(&blocked, &journal, &nodes[1])
-            .await?;
+            .await
+            .map_err(|source| failure(phase, source))?;
         for blocker in blocked.blockers {
             if !blockers.contains(&blocker) {
                 blockers.push(blocker);
             }
         }
-        readers.prepare_replacement(&journal, boots).await?;
-        let blocked = Box::pin(driver.reconcile_once(clock, deadline())).await?;
-        checked_report(&blocked)?;
+        readers
+            .prepare_replacement(&journal, boots)
+            .await
+            .map_err(|source| failure("follower-maintenance-prepare-reader", source))?;
+        let phase = "follower-maintenance-await-reader-ready";
+        let blocked = Box::pin(driver.reconcile_once(clock, deadline()))
+            .await
+            .map_err(|source| failure(phase, source))?;
+        checked_report(phase, &blocked)?;
         readers
             .require_blocked(&blocked, &journal, &nodes[1])
-            .await?;
-        Some(readers.complete_replacement(&journal, boots).await?)
+            .await
+            .map_err(|source| failure(phase, source))?;
+        Some(
+            readers
+                .complete_replacement(&journal, boots)
+                .await
+                .map_err(|source| failure("follower-maintenance-complete-reader", source))?,
+        )
     } else {
         None
     };
     let completed = loop {
-        let report = Box::pin(driver.reconcile_once(clock, deadline())).await?;
-        checked_report(&report)?;
+        let phase = "follower-maintenance-complete";
+        let report = Box::pin(driver.reconcile_once(clock, deadline()))
+            .await
+            .map_err(|source| failure(phase, source))?;
+        checked_report(phase, &report)?;
         for blocker in report.blockers {
             if !blockers.contains(&blocker) {
                 blockers.push(blocker);
@@ -360,9 +400,14 @@ pub(super) async fn run(
             "published follower policy lost original retirement history",
         ));
     }
-    service::readback(root, &inputs, &renewed).await?;
+    service::readback(root, &inputs, &renewed)
+        .await
+        .map_err(|source| failure("follower-maintenance-writer-readback", source))?;
     if let Some((readers, capture)) = inputs.readers.as_ref().zip(reader_capture.as_ref()) {
-        readers.readback(&journal, capture).await?;
+        readers
+            .readback(&journal, capture)
+            .await
+            .map_err(|source| failure("follower-maintenance-reader-readback", source))?;
     }
     let roster = FleetRoster::collect(journal.as_ref(), &completed, deadline()).await?;
     let final_counts = observation::complete_counts(&fleet, &roster, deadline())
@@ -397,12 +442,18 @@ pub(super) async fn run(
         routed_activation_replays: 0,
     })
 }
-fn checked_report(report: &cellule_host::fleet::FleetReconcileReport) -> JournalResult<()> {
-    if let Some(failure) = report.failures.first() {
-        return Err(Box::new(failure.error.clone()));
+fn checked_report(
+    phase: &'static str,
+    report: &cellule_host::fleet::FleetReconcileReport,
+) -> JournalResult<()> {
+    if let Some(failed) = report.failures.first() {
+        return Err(failure(
+            phase,
+            Box::new(failed.error.clone()) as JournalError,
+        ));
     }
-    if let Some(failure) = &report.maintenance_failure {
-        return Err(Box::new(failure.clone()));
+    if let Some(failed) = &report.maintenance_failure {
+        return Err(failure(phase, Box::new(failed.clone()) as JournalError));
     }
     Ok(())
 }

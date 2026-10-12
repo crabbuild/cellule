@@ -1853,7 +1853,10 @@ combined reader/follower `maintenance-roles` with
 the evidence limits recorded in execution evidence.
 Reader-only, live-follower-only and combined reader/follower maintenance each
 have focused end-to-end minion scenarios, as does failed-owner follower
-maintenance. A role-complete maintenance CLI and the full fault/provider
+maintenance. Live-follower errors identify the failing reconciliation, rotation
+or readback phase and preserve the original source error. This context supports
+diagnosing intermittent failures; it does not establish their earlier cause.
+A role-complete maintenance CLI and the full fault/provider
 qualification remain required:
 
 ```sh
