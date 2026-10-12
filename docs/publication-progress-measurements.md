@@ -85,12 +85,40 @@ repeats, and both original maintenance scenarios pass 10 repeats. Strict
 example/test Clippy passes. The broader persisted-observer suite records
 27 passes and two failures: a snapshot interval refusal in the new test's
 fresh observation, and an operational sample timestamp ahead of its
-advertisement in the real-expiry restart test. Both remain retained and open;
-the full suite is not qualified. Evidence remains under
+advertisement in the real-expiry restart test. That failed attempt remains
+retained; the unchanged clock-discipline repeat is recorded below. Evidence
+remains under
 `cellule-maintenance-inventory-20261012-v46`. This diagnoses the fresh inventory
 race, not the original unlogged intermittent maintenance `Fenced` cause.
 Only the reference example/tests/docs change; prepared SQL benchmark code and
 all performance gates remain unchanged.
+
+## Fresh VM clock verification
+
+October 12, 2026 UTC. A 30-second read-only support-VM probe captured a
+100.1-ms backward wall-clock step while monotonic time advanced normally. Its
+sample timestamp matches the Lima guest-agent `SyncTime` adjustment in the
+guest journal. All three target VMs also logged approximately 100-ms clock
+adjustments. Installed Lima 2.1.4 has a matching
+[upstream issue](https://github.com/lima-vm/lima/issues/5543).
+
+Only the four owned test VMs receive a reversible guest-agent systemd drop-in
+removing `CAP_SYS_TIME`. Existing NTP services continue running. Five-minute
+wall/monotonic probes then observe no backward steps in 53,610 total samples.
+Original boot IDs, active guest agents and synchronized NTP are verified;
+VM resources, Cellule code, original timestamps, deadlines and guards remain
+unchanged. The performance controller resumes its original quiet-start policy.
+
+The exact frozen binary from the earlier failed persisted-observer run passes
+all 29 tests in each of three repeats, including both timestamp-refusal cases
+and the invalid-clock rejection test. The earlier 27-pass/two-failure attempt
+remains retained. Clock steps are confirmed; their occurrence at those two
+original test failures was not captured. This does not identify the original
+unlogged maintenance `Fenced` cause or establish a performance improvement.
+Before/after journals, every clock sample, capability/boot/NTP checks, rollback
+procedure, unchanged binary hash and test logs remain under
+`cellule-clock-discipline-20261012-v49`. No corrected idle-host capacity case
+has yet been admitted.
 
 ## Fresh hosted routing comparison
 
@@ -144,19 +172,20 @@ the original intermittent maintenance `Fenced` cause remains unproved.
 
 ## Fresh hosted routing repeats
 
-October 12, 2026 UTC. The newest Compose run `38292326894` completes four
-alternating pairs with main `c79834d` and merge `0820461` (PR head `df37b68`).
-Both measured binaries are byte-identical to runs `38286916365` and
-`38289876505`; only test fixtures and docs changed between these revisions.
-All 242,192 raw latency samples per mode and every four-run median reconcile
-in each run. The table reports the newest run, with invocation latency.
+October 12, 2026 UTC. The newest Compose run `38299468996` completes four
+alternating pairs with main `c79834d` and merge `5868ab8` (PR head `90a2fab`).
+Both measured binaries are byte-identical to runs `38286916365`, `38289876505`
+and `38292326894`; test fixtures, the reference observer and docs changed
+between these revisions. All 242,192 raw latency samples per mode, publication
+coverage and every four-run median reconcile through the canonical verifier.
+The table reports the newest run, with invocation latency.
 
 | Leased lane, concurrency 16 | Main / PR operations per second | Main p50 / p95 / p99 | PR p50 / p95 / p99 |
 | --- | ---: | --- | --- |
-| Local writes | 541.56 / 543.36 | 27.93 / 40.21 / 46.86 ms | 28.00 / 39.97 / 45.16 ms |
-| Forwarded writes | 432.28 / 430.42 | 34.19 / 46.06 / 49.30 ms | 34.15 / 46.17 / 49.53 ms |
-| Local warm reads | 12,037.26 / 12,129.43 | 0.686 / 1.248 / 1.373 ms | 0.680 / 1.238 / 1.343 ms |
-| Forwarded warm reads | 3,604.01 / 3,539.87 | 2.424 / 4.288 / 5.396 ms | 2.463 / 4.464 / 5.877 ms |
+| Local writes | 560.15 / 551.65 | 27.169 / 39.343 / 43.549 ms | 27.286 / 40.199 / 45.155 ms |
+| Forwarded writes | 547.41 / 531.65 | 26.811 / 36.641 / 40.205 ms | 27.745 / 38.516 / 42.283 ms |
+| Local warm reads | 12,348.99 / 12,296.51 | 0.665 / 1.247 / 1.392 ms | 0.663 / 1.251 / 1.376 ms |
+| Forwarded warm reads | 3,306.44 / 3,287.31 | 2.624 / 4.633 / 5.532 ms | 2.654 / 4.578 / 5.913 ms |
 
 The paired signs vary across hosted runs on identical binaries:
 
@@ -165,16 +194,26 @@ The paired signs vary across hosted runs on identical binaries:
 | `38286916365` | -1.65% / +7.24% | +6.59% / -21.68% |
 | `38289876505` | -0.79% / +7.12% | -3.65% / +1.00% |
 | `38292326894` | +0.33% / -3.62% | -0.43% / +0.46% |
+| `38299468996` | -1.52% / +3.69% | -2.88% / +5.17% |
 
-Both original gates pass in the newest run; its expired-burst forwarded-query
-lane retains a p95 alert (1.103 times main). Passing those gates does not establish an improvement.
-All lanes, object-only results, samples, binaries and manifests remain retained
-under `cellule-ci-routing-df-20261012-v48`, with the earlier runs under
-`cellule-ci-routing-48-20261012-v44` and `cellule-ci-routing-14-20261012-v47`.
-[The newest CI run](https://github.com/crabbuild/cellule/actions/runs/38292326894)
+Both original gates pass in the newest run, with no leased latency alerts.
+Object-only forwarded writes retain a p99 alert: 34.312 ms on main and
+41.089 ms on the PR (1.1975 times main), with throughput 766.83/s and 738.01/s.
+Object-only expired-burst forwarded/local reads also retain p99 alerts of
+1.1510/1.3721 times main. Passing the original coarse gates does not establish
+an improvement. The previous run's leased expired-burst forwarded-query p95
+alert remains retained with that run.
+
+All lanes, object-only results, samples, binaries and manifests remain under
+`cellule-ci-routing-90a-20261012-v50`; previous runs remain under
+`cellule-ci-routing-df-20261012-v48`, `cellule-ci-routing-48-20261012-v44` and
+`cellule-ci-routing-14-20261012-v47`.
+[The newest CI run](https://github.com/crabbuild/cellule/actions/runs/38299468996)
 uses per-cell roots and does not qualify the three-VM shared-log workload.
 The matched idle-host capacity comparison and conditional rollback decision
-remain open.
+remain open. Rust CI run
+[`38299468998`](https://github.com/crabbuild/cellule/actions/runs/38299468998)
+at PR head `90a2fab` passes both workspace and MSRV jobs.
 
 ## Latest 750-write/s PR #76 verification
 
