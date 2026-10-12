@@ -79,6 +79,33 @@ python3 scripts/perf/run.py cellule-fleet --context dedicated-linux \
   --repetitions 1 --write-rates 750 1000 1500 2000
 ```
 
+`--resource-profile three-vm-1cpu --node-contexts OWNER FOLLOWER1 FOLLOWER2`
+instead places each node on a separate Docker host. Each node VM must have
+one guest CPU and a 2-GiB configured memory limit; the runner checks one CPU,
+usable RAM between 1.75 and 2 GiB, and three distinct Docker host identities.
+Record hypervisor configuration separately to verify the total VM allocation.
+Node containers use CPU 0, a 2-GiB ceiling and no swap; disable guest swap as
+well. This profile retains a fresh disk-backed node volume, rather than tmpfs,
+and records its filesystem. Node volumes and provider volumes remain retained.
+
+The separate support context needs at least six CPUs and 7 GiB usable RAM:
+RustFS uses CPUs 0–1 and the client 2–5, with the same 2-GiB container limits.
+All nodes must reach the provider at loopback port 9000. The owner and client
+must reach follower ports 8090 and 8100, and the client must reach owner port
+8080. This fixture keeps loopback-only application endpoints; prepare and record
+those cross-VM routes before running. TCP tunnels retain end-to-end pinned mTLS
+but add transport overhead that belongs in the reported configuration. Capture
+guest memory, swap, boot identity and OOM evidence alongside host contention.
+Existing delivery, debt, audit and 120-second drain requirements still apply.
+
+```sh
+python3 scripts/perf/run.py cellule-fleet --context separate-support \
+  --artifacts /absolute/external/candidate --resource-profile three-vm-1cpu \
+  --node-contexts node-owner node-follower-1 node-follower-2 \
+  --tag three-vms --cells 2000 --seconds 300 --warmup 30 \
+  --repetitions 1 --write-rates 750 1000 1500 2000
+```
+
 The example authority's renewal and publication regressions use a generated TLS
 identity and an in-memory directory. From an isolated verification checkout,
 run them explicitly with the TLS directory produced by

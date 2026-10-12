@@ -370,12 +370,57 @@ for all five containers. This establishes resource enforcement, not application
 capacity. The original queued 8-CPU-owner repeat was stopped before startup in
 response to this resource request; its deferral and observations remain retained.
 
-Fresh application runs will retain the same 2,000 Cells, 64-MiB budget, five-minute
-windows and every-ACK warm/cold readback and retry checks. Results belong to this
-separate resource profile. Artifacts are under
-`cellule-three-small-nodes-20261011-v10`; the initial resource evidence is
-`limits-probe.json`. These containers share one Linux VM and their temporary
-database storage remains tmpfs; physical-media tests are a separate route.
+The preliminary 2,000-Cell diagnostic used 30 seconds warmup and 60-second
+measurement windows. At 100 offered writes/s plus 1,000 reads/s, it delivered
+99.20 writes/s and 992.18 reads/s, with zero returned errors but 47 write drops
+and 468 read drops; one read also dropped during warmup. Read-only offered
+1,000/s delivered 999.98/s with zero errors or drops. All 10,954 acknowledged
+mutations passed warm readback and exact retry, but the owner exceeded the
+original 120-second drain deadline and the cold audit did not run. The case
+failed; these short, busy-host measurements do not qualify capacity.
+Artifacts are in `cellule-three-small-nodes-20261011-v10`, including
+`setup-verification-result.json`, raw windows and failed lifecycle evidence.
+
+The user clarified that the required topology is **three separate VMs**. The
+`three-vm-1cpu` profile routes each node to its own Docker host and retains
+fresh node volumes on those VMs' disks. Hypervisor configurations allocate
+one vCPU and 2 GiB each; distinct guest boot IDs and Docker host identities,
+usable memory, disabled guest/container swap and OOM counters are recorded.
+RustFS and the client run in a separate 6-vCPU, 8-GiB support VM. Loopback TCP
+routes use SSH tunnels while retaining end-to-end pinned peer mTLS; their
+transport overhead and shared Mac host belong to the measurement scope.
+The 2,000-Cell, 64-MiB, five-minute capacity run still requires an idle host,
+every-ACK warm/cold audits, stable debt and the original drain deadline.
+New topology artifacts are in `cellule-three-vms-20261011-v11`.
+
+A fresh 16-Cell smoke run completed on the separate VMs. Each window used
+30 seconds warmup and 60 seconds measurement, with the unchanged 96-byte value
+and 64-MiB budget:
+
+| Window | Delivered writes/s | Delivered reads/s | Returned errors / drops | Scheduled p99, write / read |
+| --- | ---: | ---: | --- | --- |
+| 10 offered writes/s + 100 reads/s | 10.00 | 100.00 | 0 / 0 | 2,058.6 / 1,885.5 ms |
+| Read-only, 100 offered reads/s | 0 | 100.00 | 0 / 0 | — / 44.7 ms |
+
+All 917 ACKs passed warm and cold readback and exact retry. Fleet drain took
+8.28 seconds; fresh bucket-only startup took 1.10 seconds. No guest or container
+OOM occurred. Mixed response-source deltas were 134 follower proofs and 466
+bundle proofs; each follower recorded four failed append attempts and its log
+reported `Fenced`. These observations do not identify the earlier CI failure.
+Host samples showed competing work, with mixed-window CPU idle values of
+38.81%, 38.34%, 0% and 61.90%. The latency target failed, and a 16-Cell smoke
+cannot qualify 2,000-Cell capacity. Clean shutdown and cold bucket restore also
+do not substitute for remote-VM crash recovery of an unpublished follower tail.
+Exact resource identities, metrics, hashes and raw evidence are retained in
+`three-vm-smoke-results.json` and `cellule-fleet-parity-three-vms-smoke-r1`.
+The fresh 2,000-Cell, five-minute 750-write/s case waits for the original idle-host
+start check; higher ramp points remain pending.
+
+The four ext4-backed process/partition cases were also repeated with fresh
+volumes after a prior cleanup observation was interrupted. All four passed in
+51.36 seconds; the repeat recorded both provider and worker stopped without
+OOM. This is device-backed process evidence, separate from remote-node VM
+failure or power-loss qualification. Both attempts remain retained.
 
 ## Retained failed attempts
 
