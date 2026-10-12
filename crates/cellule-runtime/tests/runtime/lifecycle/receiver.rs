@@ -230,10 +230,16 @@ async fn prepared_credit_transfers_into_exact_root_sql_and_one_fenced_writer() {
             .is_none()
     );
     retire(&receiver, &prepared).await;
-    assert_eq!(receiver.stats().retained_bytes(), 0);
+    assert!(matches!(
+        prepared.state(),
+        Err(cellule_runtime::Error::RuntimeClosed)
+    ));
     assert_eq!(receiver.stats().active_cells(), 1);
     activated.drain().await.unwrap();
     receiver.shutdown().await.unwrap();
+    // Resolve completion and native background work retain their own bytes
+    // while serving. The joined shutdown is the boundary for total reclamation.
+    assert_eq!(receiver.stats().retained_bytes(), 0);
     assert_eq!(receiver.stats().active_cells(), 0);
     assert_eq!(receiver.stats().resident_bytes(), 0);
     assert_eq!(receiver.stats().file_descriptors(), 0);

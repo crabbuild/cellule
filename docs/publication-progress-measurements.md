@@ -72,6 +72,30 @@ before/after evidence remain under `cellule-ltx-open-wave-20261012-v43`.
 This test fixture change leaves production admission limits and the prepared
 performance binaries unchanged.
 
+Rust CI run `38303478642` at `820b9e5` fails the receiver-credit test's
+whole-runtime zero-byte assertion while its activated Cell is still serving:
+112 bytes remain. The unchanged test reproduces that exact failure once in
+188 attempts. A resolve completion owns 48 input bytes and 64 result bytes;
+its reply releases the request slot before those reservations drop. Holding
+that actual completion boundary briefly in an isolated diagnostic reproduces
+the exact failure 5/5 times. A subsequent FIFO-only probe still fails 3/5 times
+with other live native reservations, and that failed approach remains retained.
+
+The fixture now checks that the prepared receipt is closed and the activated
+Cell remains serving, then asserts exact zero retained bytes after its existing
+joined shutdown. Every original zero-resource, exact-root, SQL and fenced-writer
+assertion remains. The corrected test passes 5/5 diagnostic runs and 1,000/1,000
+uninstrumented repeats with four parallel processes. All nine receiver tests,
+all 246 runtime integration tests and strict integration-target Clippy pass;
+six tests require their documented external environments and remain ignored.
+An initial direct-executable suite omitted Cargo's movement-probe environment
+and failed four process tests; its log is retained, and the complete suite
+passes when launched through Cargo. Temporary instrumentation is absent from
+the workspace and clean verification snapshot. Evidence remains under
+`cellule-ci-failure-820-20261012-v51`. This fixture change does not alter
+production accounting or the prepared performance binaries, and does not
+diagnose the older unlogged maintenance `Fenced` failure.
+
 Rust CI run `38292326937` at `df37b68` passes the workspace tests, then fails
 the original combined maintenance scenario with
 `Node("native inventory category changed")` during observer confirmation.
@@ -172,20 +196,20 @@ the original intermittent maintenance `Fenced` cause remains unproved.
 
 ## Fresh hosted routing repeats
 
-October 12, 2026 UTC. The newest Compose run `38299468996` completes four
-alternating pairs with main `c79834d` and merge `5868ab8` (PR head `90a2fab`).
+October 12, 2026 UTC. The newest Compose run `38303478631` completes four
+alternating pairs with main `c79834d` and merge `ab5fcda` (PR head `820b9e5`).
 Both measured binaries are byte-identical to runs `38286916365`, `38289876505`
-and `38292326894`; test fixtures, the reference observer and docs changed
+and `38292326894`, and to `38299468996`; test fixtures, the reference observer and docs changed
 between these revisions. All 242,192 raw latency samples per mode, publication
 coverage and every four-run median reconcile through the canonical verifier.
 The table reports the newest run, with invocation latency.
 
 | Leased lane, concurrency 16 | Main / PR operations per second | Main p50 / p95 / p99 | PR p50 / p95 / p99 |
 | --- | ---: | --- | --- |
-| Local writes | 560.15 / 551.65 | 27.169 / 39.343 / 43.549 ms | 27.286 / 40.199 / 45.155 ms |
-| Forwarded writes | 547.41 / 531.65 | 26.811 / 36.641 / 40.205 ms | 27.745 / 38.516 / 42.283 ms |
-| Local warm reads | 12,348.99 / 12,296.51 | 0.665 / 1.247 / 1.392 ms | 0.663 / 1.251 / 1.376 ms |
-| Forwarded warm reads | 3,306.44 / 3,287.31 | 2.624 / 4.633 / 5.532 ms | 2.654 / 4.578 / 5.913 ms |
+| Local writes | 950.69 / 873.67 | 15.710 / 24.102 / 31.714 ms | 15.652 / 26.950 / 34.894 ms |
+| Forwarded writes | 714.00 / 740.91 | 19.450 / 30.864 / 43.050 ms | 19.609 / 28.342 / 36.139 ms |
+| Local warm reads | 28,048.23 / 28,349.27 | 0.282 / 0.510 / 0.540 ms | 0.284 / 0.503 / 0.540 ms |
+| Forwarded warm reads | 7,183.39 / 7,161.29 | 1.185 / 2.258 / 2.760 ms | 1.183 / 2.334 / 2.865 ms |
 
 The paired signs vary across hosted runs on identical binaries:
 
@@ -195,25 +219,31 @@ The paired signs vary across hosted runs on identical binaries:
 | `38289876505` | -0.79% / +7.12% | -3.65% / +1.00% |
 | `38292326894` | +0.33% / -3.62% | -0.43% / +0.46% |
 | `38299468996` | -1.52% / +3.69% | -2.88% / +5.17% |
+| `38303478631` | -8.10% / +10.03% | +3.77% / -16.05% |
 
-Both original gates pass in the newest run, with no leased latency alerts.
-Object-only forwarded writes retain a p99 alert: 34.312 ms on main and
-41.089 ms on the PR (1.1975 times main), with throughput 766.83/s and 738.01/s.
-Object-only expired-burst forwarded/local reads also retain p99 alerts of
-1.1510/1.3721 times main. Passing the original coarse gates does not establish
-an improvement. The previous run's leased expired-burst forwarded-query p95
-alert remains retained with that run.
+Both original coarse gates pass in the newest run. Leased local writes retain
+p95/p99 alerts of 1.1181/1.1003 times main; leased expired-burst local reads
+retain a p99 alert of 1.1752 times main. Object-only local reads at concurrency
+one and fresh-client local reads at concurrency 16 retain p99 alerts of
+1.6335/1.1014 times main. Object-only concurrency-16 local/forwarded writes
+achieve 821.90/694.18 per second, against main's 828.60/690.97; their p99s are
+32.361/33.037 ms, against 36.882/33.999 ms. Passing the original coarse gates
+does not establish an improvement. All earlier alerts, including the previous
+run's object-only forwarded-write p99 regression, remain retained.
 
 All lanes, object-only results, samples, binaries and manifests remain under
-`cellule-ci-routing-90a-20261012-v50`; previous runs remain under
+`cellule-ci-routing-820-20261012-v52`; previous runs remain under
+`cellule-ci-routing-90a-20261012-v50`,
 `cellule-ci-routing-df-20261012-v48`, `cellule-ci-routing-48-20261012-v44` and
 `cellule-ci-routing-14-20261012-v47`.
-[The newest CI run](https://github.com/crabbuild/cellule/actions/runs/38299468996)
+[The newest CI run](https://github.com/crabbuild/cellule/actions/runs/38303478631)
 uses per-cell roots and does not qualify the three-VM shared-log workload.
 The matched idle-host capacity comparison and conditional rollback decision
 remain open. Rust CI run
 [`38299468998`](https://github.com/crabbuild/cellule/actions/runs/38299468998)
 at PR head `90a2fab` passes both workspace and MSRV jobs.
+The follow-up `820b9e5` workspace run fails the receiver fixture described above;
+its passing performance jobs do not override that CI failure.
 
 ## Latest 750-write/s PR #76 verification
 
