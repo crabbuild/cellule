@@ -1,9 +1,60 @@
 # Publication-progress measurements
 
-October 11, 2026. These fresh public-application diagnostics use Node Bundle v1,
-two required followers, and the existing 64-MiB retained-work budget. They establish
-a smaller 500-write/s acceptance milestone; the separate 2K-write/20K-read
-qualification remains open.
+These public-application diagnostics use Node Bundle v1, two required followers,
+and the existing 64-MiB retained-work budget. The earlier 500-write/s milestone
+uses an 8-vCPU owner. Fresh verification on three separate 1-vCPU/2-GiB VMs
+has not passed latency and backlog qualification. The separate
+2K-write/20K-read qualification remains open.
+
+## Fresh PR #76 write verification
+
+October 12, 2026 UTC. These new runs use three separate Linux VMs, each with
+1 vCPU and 2 GiB, on the shared workstation. Each has fresh native disk-backed
+node storage. The provider and client run separately. Each workload has 16 Cells,
+96-byte values, a 30-second warmup, a 300-second write-only window at 10 offered
+writes/s, and the unchanged 64-MiB budget and 128/128 client limits.
+
+| Fresh run | Writes completed inside window / offered | Errors / drops | Scheduled p50 / p95 / p99 | Warm / cold ACK checks |
+| --- | ---: | ---: | --- | --- |
+| Main `c79834d`, common deadline correction only | 3,000 / 3,000 (10.000/s) | 0 / 0 | 25.6 / 476.0 / 1,341.3 ms | All 3,317 pass / all 3,317 pass |
+| PR #76 with two failure-only tracing overlays | 2,705 / 3,000 (9.017/s) | 295 / 0 | 42.9 / 1,360.3 / 5,007.9 ms | 3,022 checked, 126 errors / not reached |
+| PR #76, uninstrumented repeat | 2,998 / 3,000 (9.993/s) | 0 / 0 | 33.1 / 691.3 / 2,314.5 ms | All 3,317 pass / all 3,317 pass |
+
+The table retains canonical all-attempt percentiles; the tracing row includes
+failed attempts. The uninstrumented repeat completes its remaining two writes
+during in-flight drain. Its production code is identical to PR head `08c43e5`;
+the binary was built from `a0860db`, with no measurement overlay. Main retains
+its original append-grant reuse and includes only the request-deadline correction
+common to both sides. Workload and auditor binaries are byte-identical.
+
+Both completed cases pass every ACK's warm/cold readback and original-request
+retry. Joined drain takes 11.50 seconds on main and 11.59 seconds on the PR;
+cold startup takes 1.16 and 2.51 seconds. Neither passes the existing 50-ms
+scheduled write-p99 gate. The PR repeat also fails the unchanged backlog gate:
+unpublished bytes have a positive 612.63 B/s least-squares slope over the last
+three one-minute segments. Main's corresponding byte and age slopes are
+non-positive. These are individual diagnostics, not maximum throughput results.
+
+All three windows have 17 usable host/guest samples and zero collection failures.
+Host CPU idle ranges are 6.7–66.78% on main, 0–28.57% during tracing and
+0–64.88% on the PR repeat. Unequal competing load prevents a causal performance
+comparison. No gain over main has been established; the alternating idle-host
+comparison and conditional rollback remain pending. The original 2,000-Cell
+750→1,000→1,500→2,000 write/s ramp and its evidence requirements remain intact.
+
+The tracing run reproduces a distinct five-second SQL timeout, fencing two
+Cells while the fleet remains active. It records zero failed log-append rounds
+or follower append failures; the earlier pre-load append failure does not recur.
+The warm audit fails, cold restore is not reached and owner shutdown exceeds its
+unchanged deadline. A passing uninstrumented repeat does not erase that failure.
+The earlier 2,000-Cell readiness timeout and all-failed 16-Cell sweep remain
+retained, including the latter's missing in-window host/guest evidence.
+
+Raw artifacts are under `cellule-origin-comparison-20261011-v19`,
+`cellule-append-trace-20261012-v23` and `cellule-grant-current-20261011-v18`.
+The compact `fresh-write-comparison-v25.json` and `.md` reports reconcile request
+journals, original histograms, source/binary manifests, ACK audits, publication
+frontiers, provider lifecycle and resource traces. Earlier measurements follow.
 
 ## Workload and resources
 
