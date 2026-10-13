@@ -17,7 +17,9 @@ cellule-runtime.workspace = true
 [dev-dependencies]
 async-trait.workspace = true
 bytes.workspace = true
-cellule-host.workspace = true
+# Host-backed scenarios run from the repository; omit this development-only
+# dependency from published manifests to avoid app -> host -> app release cycles.
+cellule-host = { path = "../cellule-host" }
 cellule-runtime = { workspace = true, features = ["test-support"] }
 cellule-ltx = { workspace = true, features = ["replica"] }
 cellule-store.workspace = true

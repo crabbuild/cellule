@@ -211,7 +211,7 @@ dependencies = [
 
 [[package]]
 name = "cellule-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "cellule-runtime",
@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "cellule-axum"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "cellule-app",
@@ -273,7 +273,7 @@ dependencies = [
 
 [[package]]
 name = "cellule-host"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "cellule-app",
@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "cellule-ltx"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "cellule-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "bytes",
@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "cellule-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "cellule-types"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "schemars",
  "serde",

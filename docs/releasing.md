@@ -106,12 +106,11 @@ the versioned commit has merged and passed CI:
    Allow each package version to reach the registry index before publishing
    its dependents. Keep the account token in Cargo's local credentials file;
    never paste it into the repository or workflow configuration.
-   The first release has a dev-only cycle: `cellule-app` tests depend on
-   `cellule-host`, while `cellule-host` depends on `cellule-app`. For the
-   one-time `0.1.0` bootstrap, publish `cellule-app` with that dev-dependency
-   temporarily removed and `--no-verify`, restore the manifest immediately,
-   then publish `cellule-host`. Subsequent releases use the normal workflow
-   after both crate names exist on crates.io.
+   `cellule-app` uses a path-only development dependency on `cellule-host` for
+   repository examples and integration tests. Cargo omits it from the published
+   manifest, so new compatibility lines publish without an app/host development
+   cycle. Run these examples and tests from a repository checkout; consumers of
+   the published libraries resolve the normal dependency order above.
 2. In the settings for **each** crate, add a GitHub Actions trusted publisher
    with repository `crabbuild/cellule`, workflow file `release.yml`, and
    environment `crates-io`. The workflow uses

@@ -131,9 +131,9 @@ Add the adapter alongside Axum and your Cellule application crates:
 ```toml
 [dependencies]
 axum = { version = "0.8", features = ["json"] }
-cellule-app = "0.1"
-cellule-axum = "0.1"
-cellule-runtime = "0.1"
+cellule-app = "0.2"
+cellule-axum = "0.2"
+cellule-runtime = "0.2"
 serde = { version = "1", features = ["derive"] }
 ```
 

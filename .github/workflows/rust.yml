@@ -136,8 +136,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Validate SQL and peer contracts
         run: node crates/cellule-runtime/docs/validate.mjs
-      - name: Package the independent bootstrap crate
-        run: cargo package -p cellule-types --locked
+      - name: Package and verify the complete release set
+        run: cargo package --workspace --locked
 
   msrv:
     runs-on: ubuntu-24.04
