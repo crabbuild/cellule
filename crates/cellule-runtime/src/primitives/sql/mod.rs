@@ -102,8 +102,7 @@ pub(crate) fn write_blob(
             "SQL blob write exceeds 1 MiB",
         )?;
     }
-    let mut blob =
-        transaction.blob_open(rusqlite::DatabaseName::Main, table, column, row_id, false)?;
+    let mut blob = transaction.blob_open(rusqlite::MAIN_DB, table, column, row_id, false)?;
     let written = blob.write_at(bytes, offset);
     let closed = blob.close();
     written?;
@@ -117,7 +116,7 @@ fn execute_batch(
     mode: AccessMode,
 ) -> Result<Vec<SqlResultSet>> {
     validate_batch(batch)?;
-    let _authorizer = AuthorizerGuard::install(connection, mode);
+    let _authorizer = AuthorizerGuard::install(connection, mode)?;
     let mut result_sets = Vec::with_capacity(batch.statements.len());
     let mut row_count = 0_usize;
     let mut result_bytes = 0_usize;
@@ -300,20 +299,26 @@ struct AuthorizerGuard<'a> {
 }
 
 impl<'a> AuthorizerGuard<'a> {
-    fn install(connection: &'a Connection, mode: AccessMode) -> Self {
+    fn install(connection: &'a Connection, mode: AccessMode) -> Result<Self> {
         let authorizer: fn(AuthContext<'_>) -> Authorization = match mode {
             AccessMode::ReadOnly => authorize_read,
             AccessMode::ReadWrite => authorize_write,
         };
-        connection.authorizer(Some(authorizer));
-        Self { connection }
+        // Borrowed handles reject hook installation. No application SQL may
+        // run until authorization is installed on this exact connection.
+        connection.authorizer(Some(authorizer))?;
+        Ok(Self { connection })
     }
 }
 
 impl Drop for AuthorizerGuard<'_> {
     fn drop(&mut self) {
-        self.connection
-            .authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        if let Err(error) = self
+            .connection
+            .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+        {
+            tracing::error!(%error, "SQL authorizer cleanup failed");
+        }
     }
 }
 

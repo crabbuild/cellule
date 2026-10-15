@@ -1,6 +1,6 @@
 use super::*;
 use rusqlite::{
-    DatabaseName, ErrorCode,
+    ErrorCode, MAIN_DB,
     hooks::{AuthAction, AuthContext, Authorization},
 };
 
@@ -19,19 +19,21 @@ fn database(temp: &tempfile::TempDir) -> Db {
 fn reader_is_protected_and_refreshes_its_snapshot_without_reprepare() {
     let temp = tempfile::TempDir::new().unwrap();
     let mut db = database(&temp);
-    assert!(db.reader.is_readonly(DatabaseName::Main).unwrap());
+    assert!(db.reader.is_readonly(MAIN_DB).unwrap());
     let preparations = Arc::new(AtomicU64::new(0));
     let observed = Arc::clone(&preparations);
-    db.reader.authorizer(Some(move |context: AuthContext<'_>| {
-        if let AuthAction::Read {
-            table_name: "events",
-            column_name: "value",
-        } = context.action
-        {
-            observed.fetch_add(1, Ordering::Relaxed);
-        }
-        Authorization::Allow
-    }));
+    db.reader
+        .authorizer(Some(move |context: AuthContext<'_>| {
+            if let AuthAction::Read {
+                table_name: "events",
+                column_name: "value",
+            } = context.action
+            {
+                observed.fetch_add(1, Ordering::Relaxed);
+            }
+            Authorization::Allow
+        }))
+        .unwrap();
     for expected in 1..=3 {
         let value = db
             .query_with(|connection| {
@@ -171,15 +173,17 @@ fn managed_interrupt_reaches_an_executing_read_and_is_inert_after_close() {
     let (started, receive) = std::sync::mpsc::channel();
     let worker = std::thread::spawn(move || {
         let mut started = Some(started);
-        db.reader.progress_handler(
-            1_000,
-            Some(move || {
-                if let Some(started) = started.take() {
-                    let _ = started.send(());
-                }
-                false
-            }),
-        );
+        db.reader
+            .progress_handler(
+                1_000,
+                Some(move || {
+                    if let Some(started) = started.take() {
+                        let _ = started.send(());
+                    }
+                    false
+                }),
+            )
+            .unwrap();
         let result = db.query_with(|connection| connection.query_row(
             "WITH RECURSIVE counter(value) AS (VALUES(0) UNION ALL SELECT value + 1 FROM counter WHERE value < 1000000000) SELECT sum(value) FROM counter",
             [], |row| row.get::<_, i64>(0),

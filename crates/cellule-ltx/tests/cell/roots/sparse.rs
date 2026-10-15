@@ -10,7 +10,7 @@ async fn sparse_owner_reader_materializes_pages_but_refuses_sql_mutations() {
     assert!(!before.complete());
     writer
         .query_with(|connection| -> cellule_ltx::rusqlite::Result<()> {
-            assert!(connection.is_readonly(cellule_ltx::rusqlite::DatabaseName::Main)?);
+            assert!(connection.is_readonly(cellule_ltx::rusqlite::MAIN_DB)?);
             let value: Vec<u8> =
                 connection.query_row("SELECT value FROM payload", [], |row| row.get(0))?;
             assert_eq!(value.len(), 2_000_000);

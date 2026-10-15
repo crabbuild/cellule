@@ -49,11 +49,7 @@ async fn read_only_roots_keep_exact_snapshots_without_materializing_pages() {
             .unwrap();
         assert_eq!(value, 1);
         connection.pragma_update(None, "query_only", false).unwrap();
-        assert!(
-            connection
-                .is_readonly(rusqlite::DatabaseName::Main)
-                .unwrap()
-        );
+        assert!(connection.is_readonly(rusqlite::MAIN_DB).unwrap());
         assert!(
             connection
                 .execute("UPDATE counter SET value=99", [])

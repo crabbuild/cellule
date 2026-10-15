@@ -12,16 +12,18 @@ fn unchanged_schema_reuses_capabilities_and_committed_ddl_refreshes_them() {
     let mut connection = Connection::open_in_memory().unwrap();
     let scans = Arc::new(AtomicUsize::new(0));
     let observed_scans = Arc::clone(&scans);
-    connection.authorizer(Some(move |context: AuthContext<'_>| {
-        if let AuthAction::Read {
-            table_name: "sqlite_master",
-            column_name: "name",
-        } = context.action
-        {
-            observed_scans.fetch_add(1, Ordering::Relaxed);
-        }
-        Authorization::Allow
-    }));
+    connection
+        .authorizer(Some(move |context: AuthContext<'_>| {
+            if let AuthAction::Read {
+                table_name: "sqlite_master",
+                column_name: "name",
+            } = context.action
+            {
+                observed_scans.fetch_add(1, Ordering::Relaxed);
+            }
+            Authorization::Allow
+        }))
+        .unwrap();
     let mut cache = SchemaCache::default();
     for _ in 0..10 {
         let transaction = connection.transaction().unwrap();

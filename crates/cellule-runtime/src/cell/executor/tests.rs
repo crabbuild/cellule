@@ -483,7 +483,7 @@ fn mixed_owner_reads_preserve_warm_kv_write_statements() {
                     observed.fetch_add(1, Ordering::Relaxed);
                 }
                 Authorization::Allow
-            }));
+            }))?;
             Ok(())
         })
         .unwrap();
