@@ -4,6 +4,13 @@ LTX CRC64 protects file structure and rolling database state; it is not an
 authenticator. Cell roots and objects carry BLAKE3 digests. The embedding
 service authenticates the authority record that selects a root.
 
+Managed databases use bundled SQLite 3.51.3 through rusqlite 0.39. This includes
+SQLite's [WAL-reset race fix](https://sqlite.org/releaselog/3_51_3.html), required
+when writer and checkpoint connections overlap. The `fallible_uint` feature
+preserves range-checked unsigned SQL bindings used by the runtime. Embedders
+sharing rusqlite types must select the same compatible dependency version;
+LTX capture, durability, and recovery contracts remain unchanged.
+
 | Invariant | Effect |
 | --- | --- |
 | First segment is a full snapshot | No delta-only restore. |

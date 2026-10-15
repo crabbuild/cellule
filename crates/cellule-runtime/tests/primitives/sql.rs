@@ -316,6 +316,28 @@ fn typed_batch_mutates_and_materializes_in_order() {
 }
 
 #[test]
+fn borrowed_sql_connection_cannot_bypass_the_authorizer() {
+    let connection = connection();
+    // SAFETY: The owner outlives this borrowed wrapper; access is sequential,
+    // and dropping the wrapper does not close the owner's SQLite handle.
+    let borrowed = unsafe { Connection::from_handle(connection.handle()) }.unwrap();
+    let result = sql_query_batch(
+        &borrowed,
+        &SqlBatch {
+            statements: vec![statement(
+                "SELECT commit_sequence FROM sys_meta",
+                Vec::new(),
+            )],
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(cellule_runtime::Error::Sqlite(error))
+            if error.sqlite_error_code() == Some(cellule_ltx::rusqlite::ErrorCode::ApiMisuse)
+    ));
+}
+
+#[test]
 fn authorizer_blocks_runtime_tables_and_indirect_trigger_or_view_access() {
     let mut connection = connection();
     let transaction = connection.transaction().unwrap();
