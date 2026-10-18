@@ -18,7 +18,7 @@ cellule-cookbook-support = { path = "../../../../cookbook/support" }
 cellule-runtime = { path = "../../../cellule-runtime" }
 cellule-store = { path = "../../../cellule-store" }
 object_store = { version = "0.14.1", default-features = false }
-rusqlite = { version = "0.34", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled", "fallible_uint"] }
 serde_json = "1"
 tempfile = "3"
 tokio = { version = "1.49", features = ["macros", "net", "rt-multi-thread", "signal"] }

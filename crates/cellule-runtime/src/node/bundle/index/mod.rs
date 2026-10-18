@@ -34,6 +34,42 @@ pub(super) fn history_extent(catalog: &Catalog, pin: Digest) -> Option<Locator> 
 }
 pub(super) use io::{binding_inventory, ensure_drained, load_cells};
 
+/// Concurrent original-pin checks retain at most the old single-operation
+/// metadata allowance. Provisional Cells have no detached native history.
+pub(super) fn enrollment_pin_concurrency(
+    catalog: &Catalog,
+    prepared: Option<&[u8]>,
+) -> Result<usize> {
+    let index = catalog
+        .index
+        .as_ref()
+        .ok_or(Error::Node("enrollment index is absent"))?;
+    let encoded = prepared
+        .map(|prepared| {
+            let header = prepared
+                .get(..HEADER_BYTES)
+                .ok_or(Error::Node("enrollment header is truncated"))?;
+            codec::decode(header)
+        })
+        .transpose()?;
+    let root = encoded.as_ref().unwrap_or(&index.root);
+    let largest = index
+        .loaded
+        .keys()
+        .filter_map(|id| root.shards.get(usize::from(*id)).and_then(Option::as_ref))
+        .map(|shard| shard.extent.bytes)
+        .max()
+        .unwrap_or(0);
+    let overhead = HEADER_BYTES as u64 + crate::node::MAX_NODE_BYTES;
+    let per_pin = largest
+        .checked_add(overhead)
+        .ok_or(Error::Capacity("enrollment pin metadata"))?;
+    Ok(
+        ((MAX_BUNDLE_BYTES + overhead) / per_pin).clamp(1, super::MAX_BUNDLE_ENROLLMENTS as u64)
+            as usize,
+    )
+}
+
 pub(super) const HEADER_BYTES: usize = 32 << 10;
 const SHARDS: usize = 256;
 const MAGIC: &[u8] = b"cellule.node-bundle.v1\0";

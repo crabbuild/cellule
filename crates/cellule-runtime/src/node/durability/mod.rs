@@ -16,6 +16,7 @@ use crate::node::log_transport::NodeLogTransport;
 use crate::{Error, Result};
 
 mod activation;
+mod enrollment;
 mod object_coverage;
 use object_coverage::ObjectCoverage;
 mod publication;
@@ -39,6 +40,23 @@ pub trait NodeBundleAuthority: Send + Sync {
         authority: &'a crate::control::authority::CellAuthority,
         observed: &'a crate::control::authority::VersionedControl,
     ) -> BoxFuture<'a, Result<crate::control::authority::VersionedControl>>;
+
+    /// Optionally enrolls one bounded cohort, returning one result per input in
+    /// input order. Implement with `NodeDirectory::bind_bundle_cells` under the
+    /// original catalog lock to share its provisional/Open publication pair.
+    /// Return `None` before enrollment publication or Cell pinning to decline
+    /// a cohort whose metadata exceeds the per-operation bound. Independent
+    /// heartbeat renewal is allowed. The default declines; individual `bind`
+    /// callbacks then deliver each result promptly.
+    fn bind_batch<'a>(
+        &'a self,
+        _cells: &'a [(
+            &'a crate::control::authority::CellAuthority,
+            &'a crate::control::authority::VersionedControl,
+        )],
+    ) -> BoxFuture<'a, Option<Vec<Result<crate::control::authority::VersionedControl>>>> {
+        Box::pin(async { None })
+    }
 
     /// Joins complete issued coverage, materialization/checkpoint and catalog
     /// closure after SQL/capture tasks close, including earlier Fleet ACKs.
@@ -197,6 +215,7 @@ pub struct NodeDurability {
     transport: Arc<dyn NodeLogTransport>,
     node_lease: NodeLeaseGuard,
     activation: activation::Activation,
+    enrollment: enrollment::Enrollment,
     object_coverage: ObjectCoverage,
     shutdown: Mutex<()>,
     retirement: std::sync::Mutex<Option<Arc<NodeLogRetirementObservation>>>,
@@ -247,6 +266,7 @@ impl NodeDurability {
             transport,
             node_lease,
             activation: activation::Activation::default(),
+            enrollment: enrollment::Enrollment::default(),
             object_coverage: ObjectCoverage::default(),
             shutdown: Mutex::new(()),
             retirement: std::sync::Mutex::new(None),
@@ -408,7 +428,16 @@ impl NodeDurability {
             return Ok(observed.clone());
         };
         self.node_lease.check()?;
-        let bound = bundle.bind(authority, observed).await?;
+        let bound = self
+            .enrollment
+            .bind(
+                bundle,
+                &self.node_lease,
+                self.selection_resources.get(),
+                authority,
+                observed,
+            )
+            .await?;
         self.node_lease.check()?;
         observed
             .value()
@@ -666,6 +695,9 @@ impl NodeDurability {
             }
             return Ok(proof);
         }
+        // Enrollment owns accepted catalog/Cell CAS callbacks independently of
+        // caller cancellation. Join them before closing this epoch's producer.
+        let enrollment = self.enrollment.join().await;
         let shipping = self.shipper.shutdown().await;
         let publication = if let Some(publisher) = self.publisher.get() {
             // Join both tasks even when fencing stopped the shipper. Preserve
@@ -678,6 +710,7 @@ impl NodeDurability {
         // and closure use the authority adapter's acknowledged version, even
         // when shipping or publication has already failed.
         let activation = self.activation.join().await;
+        enrollment?;
         publication?;
         shipping?;
         activation?;

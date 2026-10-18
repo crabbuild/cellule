@@ -42,6 +42,7 @@ use crate::{Error, Result};
 use bytes::Bytes;
 
 mod binding;
+pub(crate) use binding::MAX_BUNDLE_ENROLLMENTS;
 mod closure;
 mod codec;
 mod continuation;

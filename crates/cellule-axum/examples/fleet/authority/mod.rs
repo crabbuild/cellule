@@ -233,23 +233,67 @@ impl Authority {
     }
 }
 
+impl Authority {
+    async fn bind_cells(
+        &self,
+        cells: &[(
+            &cellule_runtime::control::authority::CellAuthority,
+            &cellule_runtime::control::authority::VersionedControl,
+        )],
+    ) -> Result<Vec<cellule_runtime::control::authority::VersionedControl>> {
+        let _catalog = self.catalog.lock().await;
+        let mut state = self.live_state().await?;
+        let current = self.current(&state, 1).await?;
+        let (next, pinned) = self
+            .directory
+            .bind_bundle_cells(&current, cells, clock()?)
+            .await?;
+        state.observed = next;
+        self.lease.check()?;
+        Ok(pinned)
+    }
+}
+
 impl NodeBundleAuthority for Authority {
+    fn bind_batch<'a>(
+        &'a self,
+        cells: &'a [(
+            &'a cellule_runtime::control::authority::CellAuthority,
+            &'a cellule_runtime::control::authority::VersionedControl,
+        )],
+    ) -> BoxFuture<'a, Option<Vec<Result<cellule_runtime::control::authority::VersionedControl>>>>
+    {
+        Box::pin(async move {
+            match self.bind_cells(cells).await {
+                // Declining releases both locks before individual callbacks;
+                // queued cells remain admissible under the original 4-MiB cap.
+                Err(Error::Capacity(
+                    "bundle selected shard bytes" | "bundle enrollment pin metadata",
+                )) => None,
+                Ok(pinned) => Some(pinned.into_iter().map(Ok).collect()),
+                Err(source) if cells.len() == 1 => Some(vec![Err(source)]),
+                Err(source) => {
+                    let source = Arc::new(source);
+                    Some(
+                        cells
+                            .iter()
+                            .map(|_| Err(Error::Shared(source.clone())))
+                            .collect(),
+                    )
+                }
+            }
+        })
+    }
     fn bind<'a>(
         &'a self,
         authority: &'a cellule_runtime::control::authority::CellAuthority,
         observed: &'a cellule_runtime::control::authority::VersionedControl,
     ) -> BoxFuture<'a, Result<cellule_runtime::control::authority::VersionedControl>> {
         Box::pin(async move {
-            let _catalog = self.catalog.lock().await;
-            let mut state = self.live_state().await?;
-            let current = self.current(&state, 1).await?;
-            let (next, pinned) = self
-                .directory
-                .bind_bundle_cell(&current, authority, observed, clock()?)
-                .await?;
-            state.observed = next;
-            self.lease.check()?;
-            Ok(pinned)
+            self.bind_cells(&[(authority, observed)])
+                .await?
+                .pop()
+                .ok_or(Error::Node("bundle enrollment lacks Cell"))
         })
     }
 

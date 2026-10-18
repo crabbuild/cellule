@@ -36,6 +36,11 @@ checks both Cell types against their modules and prints the descriptor digest.
 The example provisions a fenced owner for each Cell, bootstraps managed SQLite,
 and binds both handles to one `ApplicationHandle<BasicApp>`.
 
+Creation publishes durable state before returning a handle. For many new Cells,
+use bounded activation and an enrollment adapter that shares catalog publication.
+See [Cell creation latency](cell-bootstrap-latency.md) for the required ordering,
+bounded cohort API, and reproducible measurements.
+
 `KvNamespace::atomic` writes a setting in one scope; the returned receipt
 gates `get`. `QueueNamespace::send` creates an at-least-once job. The example
 claims a lease, validates it on the owner, and acknowledges the message.

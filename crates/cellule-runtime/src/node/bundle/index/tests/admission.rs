@@ -1,5 +1,57 @@
 use super::*;
 
+#[test]
+fn enrollment_pin_fanout_stays_within_one_original_metadata_read_budget() {
+    let session = SessionId::from_bytes([1; 16]);
+    let root = Root {
+        session,
+        epoch: 2,
+        predecessor: None,
+        selected_through: 0,
+        object_bytes: HEADER_BYTES as u64,
+        shards: vec![None; SHARDS],
+        frames: Vec::new(),
+    };
+    let mut catalog = Catalog {
+        session,
+        epoch: 2,
+        predecessor: None,
+        selected_through: 0,
+        bindings: Vec::new(),
+        index: Some(LoadedIndex {
+            root,
+            loaded: [(0, Vec::new())].into_iter().collect(),
+            histories: BTreeMap::new(),
+        }),
+    };
+    for bytes in [1, 1 << 20, MAX_BUNDLE_BYTES] {
+        catalog.index.as_mut().unwrap().root.shards[0] = Some(Shard {
+            extent: Locator {
+                object: Some(Digest::from_bytes([7; 32])),
+                offset: HEADER_BYTES as u64,
+                bytes,
+                frame_digest: Digest::from_bytes([8; 32]),
+            },
+            bindings: 1,
+        });
+        let concurrency = enrollment_pin_concurrency(&catalog, None).unwrap();
+        let overhead = HEADER_BYTES as u64 + crate::node::MAX_NODE_BYTES;
+        assert!(
+            concurrency * (bytes + overhead) as usize <= (MAX_BUNDLE_BYTES + overhead) as usize
+        );
+        assert_eq!(
+            concurrency,
+            if bytes == 1 {
+                8
+            } else if bytes == 1 << 20 {
+                3
+            } else {
+                1
+            }
+        );
+    }
+}
+
 #[tokio::test]
 async fn aggregate_history_budget_is_checked_before_the_first_history_read() {
     let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
