@@ -22,25 +22,49 @@ async fn authority() -> Arc<Authority> {
         code,
         code,
     );
-    let enrollment = Enrollment::start(
+    // Keep the production 30-second advertisement lifetime, but make its
+    // issue time unambiguously older than the queued renewal. Creating and
+    // renewing in the same wall-clock millisecond cannot advance authority.
+    let now = clock().unwrap();
+    let observed = directory
+        .create(
+            NodeAdvertisement::sign(
+                node(0),
+                SessionId::from_bytes([11; 16]),
+                "https://localhost:8081".into(),
+                tls.fleet(),
+                tls.certificate(),
+                code,
+                code,
+                tls.signing_key(),
+                1,
+                now - 1_000,
+                now + 29_000,
+                vec![code],
+                vec![1],
+                NodeFailureDomain::default(),
+                capacity(None),
+            )
+            .unwrap(),
+            now,
+        )
+        .await
+        .unwrap();
+    // A shorter local deadline remains conservative relative to that signed
+    // advertisement. The 20 queued jobs must still cross this one-second bound.
+    Arc::new(Authority {
         directory,
         tls,
-        0,
-        SessionId::from_bytes([11; 16]),
-        "https://localhost:8081".into(),
         code,
-        None,
-    )
-    .await
-    .unwrap();
-    enrollment.stop.send(true).unwrap();
-    enrollment.heartbeat.await.unwrap().unwrap();
-    // A shorter local deadline is conservative relative to the signed
-    // advertisement. It reproduces a nearly exhausted renewal window.
-    let mut authority = Arc::try_unwrap(enrollment.authority).ok().unwrap();
-    let now = clock().unwrap();
-    authority.lease = NodeLeaseGuard::new(now, now + 1_000).unwrap();
-    Arc::new(authority)
+        lease: NodeLeaseGuard::new(now, now + 1_000).unwrap(),
+        catalog: Mutex::new(()),
+        state: Mutex::new(State {
+            observed,
+            closed: None,
+        }),
+        follower: None,
+        shutdown_error: std::sync::OnceLock::new(),
+    })
 }
 
 #[tokio::test]

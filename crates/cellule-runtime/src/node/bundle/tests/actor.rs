@@ -26,20 +26,53 @@ pub(super) struct Authority {
     pub(super) observed: tokio::sync::Mutex<VersionedNodeAdvertisement>,
 }
 
+impl Authority {
+    async fn bind_cells(
+        &self,
+        cells: &[(&CellAuthority, &VersionedControl)],
+    ) -> Result<Vec<VersionedControl>> {
+        let mut node = self.observed.lock().await;
+        let (next, pinned) = self.directory.bind_bundle_cells(&node, cells, NOW).await?;
+        *node = next;
+        Ok(pinned)
+    }
+}
+
 impl NodeBundleAuthority for Authority {
+    fn bind_batch<'a>(
+        &'a self,
+        cells: &'a [(&'a CellAuthority, &'a VersionedControl)],
+    ) -> BoxFuture<'a, Option<Vec<Result<VersionedControl>>>> {
+        Box::pin(async move {
+            match self.bind_cells(cells).await {
+                // The metadata preflight has performed no authority mutation.
+                Err(Error::Capacity(
+                    "bundle selected shard bytes" | "bundle enrollment pin metadata",
+                )) => None,
+                Ok(pinned) => Some(pinned.into_iter().map(Ok).collect()),
+                Err(source) if cells.len() == 1 => Some(vec![Err(source)]),
+                Err(source) => {
+                    let source = Arc::new(source);
+                    Some(
+                        cells
+                            .iter()
+                            .map(|_| Err(Error::Shared(source.clone())))
+                            .collect(),
+                    )
+                }
+            }
+        })
+    }
     fn bind<'a>(
         &'a self,
         authority: &'a CellAuthority,
         observed: &'a VersionedControl,
     ) -> BoxFuture<'a, Result<VersionedControl>> {
         Box::pin(async move {
-            let mut node = self.observed.lock().await;
-            let (next, pinned) = self
-                .directory
-                .bind_bundle_cell(&node, authority, observed, NOW)
-                .await?;
-            *node = next;
-            Ok(pinned)
+            self.bind_cells(&[(authority, observed)])
+                .await?
+                .pop()
+                .ok_or(Error::Node("bundle enrollment lacks Cell"))
         })
     }
     fn close<'a>(

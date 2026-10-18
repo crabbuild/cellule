@@ -4,6 +4,9 @@ use crate::control::authority::{CellAuthority, VersionedControl};
 use crate::control::{ControlState, Transition};
 use crate::identity::ApplicationId;
 use crate::node::{NodeDirectory, VersionedNodeAdvertisement};
+use futures_util::StreamExt as _;
+
+pub(crate) const MAX_BUNDLE_ENROLLMENTS: usize = 8;
 
 impl NodeDirectory {
     /// Creates an empty bundle lane before native issuance starts for this boot.
@@ -36,9 +39,7 @@ impl NodeDirectory {
         self.select_catalog(observed, &prepared, now_ms).await
     }
 
-    /// Reserves a provisional catalog entry before pinning the original Cell,
-    /// then opens it only after the Cell CAS is confirmed. Cancellation or an
-    /// ambiguous failure leaves a catalog obligation that blocks maintenance.
+    /// Reserves and pins one original Cell before opening SQL admission.
     pub async fn bind_bundle_cell(
         &self,
         observed: &VersionedNodeAdvertisement,
@@ -46,18 +47,161 @@ impl NodeDirectory {
         control: &VersionedControl,
         now_ms: i64,
     ) -> Result<(VersionedNodeAdvertisement, VersionedControl)> {
+        let (node, mut pinned) = self
+            .bind_bundle_cells(observed, &[(authority, control)], now_ms)
+            .await?;
+        Ok((
+            node,
+            pinned
+                .pop()
+                .ok_or(Error::Node("bundle enrollment lacks Cell"))?,
+        ))
+    }
+
+    /// Enrolls at most eight Cells in one provisional/open catalog pair.
+    ///
+    /// The provisional inventory CAS precedes every original Cell pin. All pin
+    /// attempts join before the Open catalog is selected. A failed or cancelled
+    /// cohort leaves discoverable provisional obligations, never SQL admission.
+    /// Results retain input order. Callers serialize the two catalog selections
+    /// with publication and reload node/Cell authority after ambiguous failure.
+    pub async fn bind_bundle_cells(
+        &self,
+        observed: &VersionedNodeAdvertisement,
+        cells: &[(&CellAuthority, &VersionedControl)],
+        now_ms: i64,
+    ) -> Result<(VersionedNodeAdvertisement, Vec<VersionedControl>)> {
         self.validate(&observed.advertisement, now_ms)?;
+        if cells.is_empty() || cells.len() > MAX_BUNDLE_ENROLLMENTS {
+            return Err(Error::Node("invalid bundle enrollment cohort"));
+        }
         let head = observed
             .advertisement
             .bundle
             .ok_or(Error::Node("bundle lane is absent"))?;
-        let value = control.value();
-        let cells = [(*authority.layout().application_id(), *value.cell.as_bytes())]
-            .into_iter()
-            .collect();
+        let keys = cells
+            .iter()
+            .map(|(authority, control)| {
+                (
+                    *authority.layout().application_id(),
+                    *control.value().cell.as_bytes(),
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        if keys.len() != cells.len() {
+            return Err(Error::Node("duplicate bundle enrollment Cell"));
+        }
         let mut catalog =
-            store::load_catalog_cells(&self.layout, observed.advertisement.session, head, &cells)
+            store::load_catalog_cells(&self.layout, observed.advertisement.session, head, &keys)
                 .await?;
+        let mut plans = Vec::with_capacity(cells.len());
+        let mut reserve = false;
+        let mut opening = false;
+        for (authority, control) in cells {
+            let (pin, next, new) = self.plan_binding(&catalog, authority, control)?;
+            let exists = catalog.bindings.iter().any(|binding| {
+                binding.control.bundle_binding == Some(pin) && binding.phase == BindingPhase::Open
+            });
+            opening |= !exists;
+            if new {
+                let base = next
+                    .ltx_root()
+                    .ok_or(Error::Node("bundle binding lacks published base"))?;
+                catalog.bindings.push(Binding {
+                    application: ApplicationId::from_bytes(*authority.layout().application_id()),
+                    first_commit: base.commit_sequence,
+                    control: next.clone(),
+                    phase: BindingPhase::Provisional,
+                    terminal: None,
+                    selected_sequence: 0,
+                    selected_commit: base.commit_sequence,
+                    selected_position: base.position,
+                    locators: Vec::new(),
+                });
+                reserve = true;
+            }
+            plans.push((pin, next));
+        }
+        if !opening {
+            return Ok((
+                observed.clone(),
+                cells
+                    .iter()
+                    .map(|(_, control)| (*control).clone())
+                    .collect(),
+            ));
+        }
+        let (reserved, pin_concurrency) = if reserve {
+            catalog.bindings.sort_unstable_by_key(|binding| {
+                binding
+                    .control
+                    .bundle_binding
+                    .map(|pin| *pin.digest.as_bytes())
+            });
+            let staged = self.stage_catalog(Some(head), catalog.clone(), &[], Vec::new())?;
+            let concurrency = index::enrollment_pin_concurrency(&catalog, Some(&staged.body))?;
+            if concurrency < cells.len() {
+                return Err(Error::Capacity("bundle enrollment pin metadata"));
+            }
+            let prepared = self.upload_node_bundle(staged).await?;
+            (
+                self.select_catalog(observed, &prepared, now_ms).await?,
+                concurrency,
+            )
+        } else {
+            let concurrency = index::enrollment_pin_concurrency(&catalog, None)?;
+            if concurrency < cells.len() {
+                return Err(Error::Capacity("bundle enrollment pin metadata"));
+            }
+            (observed.clone(), concurrency)
+        };
+        // Join accepted sibling pins even if one fails. Their provisional
+        // catalog entries remain the complete recovery/maintenance inventory.
+        let pin_checks = cells
+            .iter()
+            .zip(&plans)
+            .map(|((authority, control), (_, next))| async move {
+                if control.value().bundle_binding.is_some() {
+                    return Ok((*control).clone());
+                }
+                match authority
+                    .transition(control, next.clone(), Transition::BindBundle)
+                    .await
+                {
+                    Ok(pinned) => Ok(pinned),
+                    Err(source) => match authority.load(control.value().cell).await {
+                        Ok(Some(current)) if current.value() == next => Ok(current),
+                        _ => Err(source),
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+        let results = futures_util::stream::iter(pin_checks)
+            .buffered(pin_concurrency)
+            .collect::<Vec<_>>()
+            .await;
+        let pinned = results.into_iter().collect::<Result<Vec<_>>>()?;
+        for ((pin, _), control) in plans.iter().zip(&pinned) {
+            let binding = catalog.binding_mut(pin.digest)?;
+            binding.control = control.value().clone();
+            binding.phase = BindingPhase::Open;
+        }
+        let prepared = self
+            .upload_catalog(reserved.advertisement.bundle, catalog, &[])
+            .await?;
+        Ok((
+            self.select_catalog(&reserved, &prepared, now_ms).await?,
+            pinned,
+        ))
+    }
+
+    fn plan_binding(
+        &self,
+        catalog: &Catalog,
+        authority: &CellAuthority,
+        control: &VersionedControl,
+    ) -> Result<(BundleBindingRef, Control, bool)> {
+        let value = control.value();
         if value.state != ControlState::Serving
             || value.recovery.is_some()
             || value
@@ -94,7 +238,11 @@ impl NodeDirectory {
                 if binding.control.bundle_binding != value.bundle_binding {
                     return Err(Error::Fenced);
                 }
-                return Ok((observed.clone(), control.clone()));
+                return Ok((
+                    binding.control.bundle_binding.ok_or(Error::Fenced)?,
+                    value.clone(),
+                    false,
+                ));
             }
             if binding.phase != BindingPhase::Provisional {
                 return Err(Error::Fenced);
@@ -141,59 +289,6 @@ impl NodeDirectory {
                 .ok_or(Error::Control("progress overflow"))?;
             next.bundle_binding = Some(pin);
         }
-        // Select the inventory obligation first. Otherwise cancellation after
-        // Cell pinning could leave a pin absent from the complete node catalog.
-        let reserved = if existing.is_none() {
-            let base = next
-                .ltx_root()
-                .ok_or(Error::Node("bundle binding lacks published base"))?;
-            catalog.bindings.push(Binding {
-                application,
-                first_commit: base.commit_sequence,
-                control: next.clone(),
-                phase: BindingPhase::Provisional,
-                terminal: None,
-                selected_sequence: 0,
-                selected_commit: base.commit_sequence,
-                selected_position: base.position,
-                locators: Vec::new(),
-            });
-            catalog.bindings.sort_unstable_by_key(|binding| {
-                binding
-                    .control
-                    .bundle_binding
-                    .map(|pin| *pin.digest.as_bytes())
-            });
-            let prepared = self
-                .upload_catalog(Some(head), catalog.clone(), &[])
-                .await?;
-            self.select_catalog(observed, &prepared, now_ms).await?
-        } else {
-            observed.clone()
-        };
-        let pinned = if value.bundle_binding.is_some() {
-            control.clone()
-        } else {
-            match authority
-                .transition(control, next.clone(), Transition::BindBundle)
-                .await
-            {
-                Ok(pinned) => pinned,
-                Err(source) => match authority.load(value.cell).await {
-                    Ok(Some(current)) if current.value() == &next => current,
-                    _ => return Err(source),
-                },
-            }
-        };
-        let binding = catalog.binding_mut(pin.digest)?;
-        binding.control = pinned.value().clone();
-        binding.phase = BindingPhase::Open;
-        let prepared = self
-            .upload_catalog(reserved.advertisement.bundle, catalog, &[])
-            .await?;
-        Ok((
-            self.select_catalog(&reserved, &prepared, now_ms).await?,
-            pinned,
-        ))
+        Ok((pin, next, existing.is_none()))
     }
 }

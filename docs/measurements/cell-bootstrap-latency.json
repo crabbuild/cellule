@@ -1,0 +1,1493 @@
+{
+  "base_revision": "aec0e2b73528bdb0471cfe713b9b3ce30c6f37cb",
+  "source_sha256": {
+    "crates/cellule-runtime/src/node/bundle/binding.rs": "e41002bc453fe78a270c4ca30f9dfd95dacaa5e52ac2a397e846a56be07a7f76",
+    "crates/cellule-runtime/src/node/bundle/index/mod.rs": "0e5048439ea9ed9aafb722be9283d9dbee37f7943685430b5c8eb2886b8cb9bc",
+    "crates/cellule-runtime/src/node/bundle/mod.rs": "9dbe7b079bbcfb067375f8f4023b7c9cc6c5da863173d7701db490c45288f77c",
+    "crates/cellule-runtime/src/node/durability/mod.rs": "01352634814ad10100fec1d5e9e48ef50caa7910f4d05e32f9200812b41f7e7c",
+    "crates/cellule-runtime/src/node/durability/enrollment/mod.rs": "cb32ea6f1dd0662fcf0b2d6b49f9be676fb7c12d9985e7040e0e4e911423ac23",
+    "crates/cellule-axum/examples/fleet/authority/mod.rs": "0286b6ef2b7afd7b9615822f2541dde8d8e56cbb0ca7aa47bf9c755f32b3bf28",
+    "crates/cellule-runtime/src/node/bundle/tests/bootstrap_cost.rs": "e71811917a31bc9e2dc56670d5e1a0f00ede46fb64447e882355c05ba16f29d5",
+    "crates/cellule-runtime/src/node/bundle/tests/enrollment_cost.rs": "84b5f02ac05ebc3d3decfd1f2a5824240fe7ff626ef8d9f44ace4e4a3982ad23",
+    "crates/cellule-runtime/src/node/bundle/tests/actor.rs": "d4d7c25f8d5cd501b10770256755f46612a53cb8d01f492ee97d56d4a8461385"
+  },
+  "environment": {
+    "toolchain": "Rust 1.97.0",
+    "test_profile": "unoptimized, debug=0",
+    "host": "shared macOS/aarch64 workstation with other workloads",
+    "object_store": "fresh InMemory behind ThrottledStore per fixture",
+    "per_call_delay_ms": [
+      0,
+      5,
+      20
+    ],
+    "sqlite": "fresh temporary local SQLite databases",
+    "sql_workers_for_full_bootstrap": 2,
+    "repetitions_per_setting": 3,
+    "workload": "Small Cells with one counter initialized to zero plus runtime metadata; no concurrent application write commands",
+    "node_cpu_or_memory_quota": "none; shared native host"
+  },
+  "comparison": "Both adapters run in one binary. Serial uses individual canonical bind callbacks; cohort implements the optional bounded bind_batch hook.",
+  "command": "CARGO_PROFILE_TEST_DEBUG=0 cargo +1.97.0 test -p cellule-runtime --lib comparison --locked -- --ignored --nocapture --test-threads=1",
+  "postmeasurement_checks": {
+    "all_initialized_roots_restored_and_counter_zero": true,
+    "all_warm_leased_reads_zero_object_operations": true,
+    "both_manual_diagnostics_exit_code": 0
+  },
+  "scope": "Framework API bootstrap and enrollment under controlled delays; provider/HTTP/three-VM capacity and ordinary write throughput remain separate qualifications.",
+  "percentiles": "nearest rank over per-Cell latency observations",
+  "summary": [
+    {
+      "kind": "bootstrap_measurement",
+      "delay_ms": 5,
+      "cells": 1,
+      "mode": "cohort",
+      "runs": 3,
+      "observations": 3,
+      "p50_ms": 133.840875,
+      "p95_ms": 157.89666599999998,
+      "puts_per_run": [
+        12,
+        12,
+        12
+      ],
+      "gets_per_run": [
+        6,
+        6,
+        6
+      ]
+    },
+    {
+      "kind": "bootstrap_measurement",
+      "delay_ms": 5,
+      "cells": 1,
+      "mode": "serial",
+      "runs": 3,
+      "observations": 3,
+      "p50_ms": 136.60566599999999,
+      "p95_ms": 139.472542,
+      "puts_per_run": [
+        12,
+        12,
+        12
+      ],
+      "gets_per_run": [
+        6,
+        6,
+        6
+      ]
+    },
+    {
+      "kind": "bootstrap_measurement",
+      "delay_ms": 5,
+      "cells": 8,
+      "mode": "cohort",
+      "runs": 3,
+      "observations": 24,
+      "p50_ms": 212.0875,
+      "p95_ms": 220.632,
+      "puts_per_run": [
+        72,
+        72,
+        72
+      ],
+      "gets_per_run": [
+        42,
+        42,
+        42
+      ]
+    },
+    {
+      "kind": "bootstrap_measurement",
+      "delay_ms": 5,
+      "cells": 8,
+      "mode": "serial",
+      "runs": 3,
+      "observations": 24,
+      "p50_ms": 351.481334,
+      "p95_ms": 639.325209,
+      "puts_per_run": [
+        96,
+        96,
+        96
+      ],
+      "gets_per_run": [
+        48,
+        48,
+        48
+      ]
+    },
+    {
+      "kind": "bootstrap_measurement",
+      "delay_ms": 20,
+      "cells": 1,
+      "mode": "cohort",
+      "runs": 3,
+      "observations": 3,
+      "p50_ms": 386.435208,
+      "p95_ms": 425.33824999999996,
+      "puts_per_run": [
+        12,
+        12,
+        12
+      ],
+      "gets_per_run": [
+        6,
+        6,
+        6
+      ]
+    },
+    {
+      "kind": "bootstrap_measurement",
+      "delay_ms": 20,
+      "cells": 1,
+      "mode": "serial",
+      "runs": 3,
+      "observations": 3,
+      "p50_ms": 386.68875,
+      "p95_ms": 428.591541,
+      "puts_per_run": [
+        12,
+        12,
+        12
+      ],
+      "gets_per_run": [
+        6,
+        6,
+        6
+      ]
+    },
+    {
+      "kind": "bootstrap_measurement",
+      "delay_ms": 20,
+      "cells": 8,
+      "mode": "cohort",
+      "runs": 3,
+      "observations": 24,
+      "p50_ms": 640.663709,
+      "p95_ms": 665.60475,
+      "puts_per_run": [
+        72,
+        72,
+        72
+      ],
+      "gets_per_run": [
+        42,
+        42,
+        42
+      ]
+    },
+    {
+      "kind": "bootstrap_measurement",
+      "delay_ms": 20,
+      "cells": 8,
+      "mode": "serial",
+      "runs": 3,
+      "observations": 24,
+      "p50_ms": 1121.455042,
+      "p95_ms": 2009.354334,
+      "puts_per_run": [
+        96,
+        96,
+        96
+      ],
+      "gets_per_run": [
+        48,
+        48,
+        48
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 0,
+      "cells": 1,
+      "mode": "cohort",
+      "runs": 3,
+      "observations": 3,
+      "p50_ms": 8.079042,
+      "p95_ms": 9.012625,
+      "puts_per_run": [
+        5,
+        5,
+        5
+      ],
+      "gets_per_run": [
+        4,
+        4,
+        4
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 0,
+      "cells": 1,
+      "mode": "serial",
+      "runs": 3,
+      "observations": 3,
+      "p50_ms": 7.062208,
+      "p95_ms": 12.232083,
+      "puts_per_run": [
+        5,
+        5,
+        5
+      ],
+      "gets_per_run": [
+        4,
+        4,
+        4
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 0,
+      "cells": 8,
+      "mode": "cohort",
+      "runs": 3,
+      "observations": 24,
+      "p50_ms": 17.975250000000003,
+      "p95_ms": 18.097917000000002,
+      "puts_per_run": [
+        12,
+        12,
+        12
+      ],
+      "gets_per_run": [
+        25,
+        25,
+        25
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 0,
+      "cells": 8,
+      "mode": "serial",
+      "runs": 3,
+      "observations": 24,
+      "p50_ms": 56.288625,
+      "p95_ms": 56.736292,
+      "puts_per_run": [
+        40,
+        40,
+        40
+      ],
+      "gets_per_run": [
+        32,
+        32,
+        32
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 5,
+      "cells": 1,
+      "mode": "cohort",
+      "runs": 3,
+      "observations": 3,
+      "p50_ms": 94.38050000000001,
+      "p95_ms": 106.501333,
+      "puts_per_run": [
+        5,
+        5,
+        5
+      ],
+      "gets_per_run": [
+        4,
+        4,
+        4
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 5,
+      "cells": 1,
+      "mode": "serial",
+      "runs": 3,
+      "observations": 3,
+      "p50_ms": 85.301917,
+      "p95_ms": 96.316625,
+      "puts_per_run": [
+        5,
+        5,
+        5
+      ],
+      "gets_per_run": [
+        4,
+        4,
+        4
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 5,
+      "cells": 8,
+      "mode": "cohort",
+      "runs": 3,
+      "observations": 24,
+      "p50_ms": 101.3045,
+      "p95_ms": 104.84845800000001,
+      "puts_per_run": [
+        12,
+        12,
+        12
+      ],
+      "gets_per_run": [
+        25,
+        25,
+        25
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 5,
+      "cells": 8,
+      "mode": "serial",
+      "runs": 3,
+      "observations": 24,
+      "p50_ms": 372.474333,
+      "p95_ms": 726.781083,
+      "puts_per_run": [
+        40,
+        40,
+        40
+      ],
+      "gets_per_run": [
+        32,
+        32,
+        32
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 20,
+      "cells": 1,
+      "mode": "cohort",
+      "runs": 3,
+      "observations": 3,
+      "p50_ms": 244.017958,
+      "p95_ms": 244.2795,
+      "puts_per_run": [
+        5,
+        5,
+        5
+      ],
+      "gets_per_run": [
+        4,
+        4,
+        4
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 20,
+      "cells": 1,
+      "mode": "serial",
+      "runs": 3,
+      "observations": 3,
+      "p50_ms": 245.225125,
+      "p95_ms": 250.705791,
+      "puts_per_run": [
+        5,
+        5,
+        5
+      ],
+      "gets_per_run": [
+        4,
+        4,
+        4
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 20,
+      "cells": 8,
+      "mode": "cohort",
+      "runs": 3,
+      "observations": 24,
+      "p50_ms": 218.660292,
+      "p95_ms": 251.006542,
+      "puts_per_run": [
+        12,
+        12,
+        12
+      ],
+      "gets_per_run": [
+        25,
+        25,
+        25
+      ]
+    },
+    {
+      "kind": "enrollment_measurement",
+      "delay_ms": 20,
+      "cells": 8,
+      "mode": "serial",
+      "runs": 3,
+      "observations": 24,
+      "p50_ms": 957.888709,
+      "p95_ms": 1689.0104999999999,
+      "puts_per_run": [
+        40,
+        40,
+        40
+      ],
+      "gets_per_run": [
+        32,
+        32,
+        32
+      ]
+    }
+  ],
+  "observations": [
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 139.477083,
+      "gets": 6,
+      "latencies_ms": [
+        139.472542
+      ],
+      "mode": "serial",
+      "puts": 12,
+      "sample": 0,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 133.846708,
+      "gets": 6,
+      "latencies_ms": [
+        133.840875
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 0,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 130.922166,
+      "gets": 6,
+      "latencies_ms": [
+        130.91687499999998
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 1,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 136.61041600000001,
+      "gets": 6,
+      "latencies_ms": [
+        136.60566599999999
+      ],
+      "mode": "serial",
+      "puts": 12,
+      "sample": 1,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 136.58999999999997,
+      "gets": 6,
+      "latencies_ms": [
+        136.5835
+      ],
+      "mode": "serial",
+      "puts": 12,
+      "sample": 2,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 157.904875,
+      "gets": 6,
+      "latencies_ms": [
+        157.89666599999998
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 2,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 640.4045000000001,
+      "gets": 48,
+      "latencies_ms": [
+        135.712875,
+        351.481334,
+        209.289917,
+        423.7625,
+        280.006375,
+        495.30654200000004,
+        568.5350420000001,
+        640.391209
+      ],
+      "mode": "serial",
+      "puts": 96,
+      "sample": 0,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 220.644792,
+      "gets": 42,
+      "latencies_ms": [
+        142.84199999999998,
+        220.577958,
+        219.96925000000002,
+        220.579917,
+        220.096167,
+        220.630625,
+        220.632,
+        220.633333
+      ],
+      "mode": "cohort",
+      "puts": 72,
+      "sample": 0,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 209.011292,
+      "gets": 42,
+      "latencies_ms": [
+        131.59316700000002,
+        208.936959,
+        208.33545900000001,
+        208.99525,
+        208.42054199999998,
+        208.99675000000002,
+        208.998209,
+        208.999459
+      ],
+      "mode": "cohort",
+      "puts": 72,
+      "sample": 1,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 639.339334,
+      "gets": 48,
+      "latencies_ms": [
+        132.973917,
+        275.673709,
+        204.37675,
+        420.750917,
+        346.333125,
+        493.449584,
+        567.3947499999999,
+        639.325209
+      ],
+      "mode": "serial",
+      "puts": 96,
+      "sample": 1,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 633.860833,
+      "gets": 48,
+      "latencies_ms": [
+        131.536417,
+        274.872208,
+        203.5575,
+        415.222542,
+        345.5575,
+        489.310917,
+        560.457958,
+        633.840208
+      ],
+      "mode": "serial",
+      "puts": 96,
+      "sample": 2,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 212.594334,
+      "gets": 42,
+      "latencies_ms": [
+        135.989042,
+        212.52158400000002,
+        211.951459,
+        212.579417,
+        212.0875,
+        212.580792,
+        212.581917,
+        212.583084
+      ],
+      "mode": "cohort",
+      "puts": 72,
+      "sample": 2,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 379.043708,
+      "gets": 6,
+      "latencies_ms": [
+        379.03858299999996
+      ],
+      "mode": "serial",
+      "puts": 12,
+      "sample": 0,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 386.441625,
+      "gets": 6,
+      "latencies_ms": [
+        386.435208
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 0,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 378.38883400000003,
+      "gets": 6,
+      "latencies_ms": [
+        378.383334
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 1,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 386.71337500000004,
+      "gets": 6,
+      "latencies_ms": [
+        386.68875
+      ],
+      "mode": "serial",
+      "puts": 12,
+      "sample": 1,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 428.601083,
+      "gets": 6,
+      "latencies_ms": [
+        428.591541
+      ],
+      "mode": "serial",
+      "puts": 12,
+      "sample": 2,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 425.40462499999995,
+      "gets": 6,
+      "latencies_ms": [
+        425.33824999999996
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 2,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 1996.6422499999999,
+      "gets": 48,
+      "latencies_ms": [
+        654.957792,
+        425.86775,
+        1113.8025,
+        880.162542,
+        1562.903875,
+        1336.02575,
+        1777.422375,
+        1996.607833
+      ],
+      "mode": "serial",
+      "puts": 96,
+      "sample": 0,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 665.714583,
+      "gets": 42,
+      "latencies_ms": [
+        415.156125,
+        665.533083,
+        664.380792,
+        665.540125,
+        664.679583,
+        665.543542,
+        665.60475,
+        665.684375
+      ],
+      "mode": "cohort",
+      "puts": 72,
+      "sample": 0,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 642.124917,
+      "gets": 42,
+      "latencies_ms": [
+        397.104709,
+        397.114084,
+        640.663709,
+        641.797084,
+        640.897375,
+        641.8022500000001,
+        641.92625,
+        642.087209
+      ],
+      "mode": "cohort",
+      "puts": 72,
+      "sample": 1,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 2026.079541,
+      "gets": 48,
+      "latencies_ms": [
+        406.952166,
+        648.4657080000001,
+        876.666791,
+        1109.7785,
+        1575.5675,
+        1334.472458,
+        1807.4270000000001,
+        2026.0642080000002
+      ],
+      "mode": "serial",
+      "puts": 96,
+      "sample": 1,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 2009.3984169999999,
+      "gets": 48,
+      "latencies_ms": [
+        423.07129199999997,
+        655.801709,
+        1121.455042,
+        885.560542,
+        1564.038209,
+        1350.173542,
+        1777.5794170000001,
+        2009.354334
+      ],
+      "mode": "serial",
+      "puts": 96,
+      "sample": 2,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 600.520708,
+      "gets": 42,
+      "latencies_ms": [
+        387.320916,
+        387.323125,
+        599.970375,
+        600.412625,
+        600.085375,
+        600.414125,
+        600.4500830000001,
+        600.505125
+      ],
+      "mode": "cohort",
+      "puts": 72,
+      "sample": 2,
+      "warm_read_object_operations": 0,
+      "kind": "bootstrap_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 0,
+      "elapsed_ms": 12.23575,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        12.232083
+      ],
+      "mode": "serial",
+      "puts": 5,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 0,
+      "elapsed_ms": 9.015334,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        9.012625
+      ],
+      "mode": "cohort",
+      "puts": 5,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 0,
+      "elapsed_ms": 8.081084,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        8.079042
+      ],
+      "mode": "cohort",
+      "puts": 5,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 0,
+      "elapsed_ms": 7.0635,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        7.062208
+      ],
+      "mode": "serial",
+      "puts": 5,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 0,
+      "elapsed_ms": 6.921167,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        6.92
+      ],
+      "mode": "serial",
+      "puts": 5,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 0,
+      "elapsed_ms": 7.423125,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        7.420833
+      ],
+      "mode": "cohort",
+      "puts": 5,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 0,
+      "elapsed_ms": 56.300334,
+      "gets": 32,
+      "heads": 0,
+      "latencies_ms": [
+        56.28129199999999,
+        56.284124999999996,
+        56.286417,
+        56.288625,
+        56.290791999999996,
+        56.293042,
+        56.295417,
+        56.29775
+      ],
+      "mode": "serial",
+      "puts": 40,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 0,
+      "elapsed_ms": 18.102458,
+      "gets": 25,
+      "heads": 0,
+      "latencies_ms": [
+        18.087208,
+        18.089458,
+        18.09125,
+        18.092875000000003,
+        18.094542,
+        18.096167,
+        18.097917000000002,
+        18.099583
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 0,
+      "elapsed_ms": 17.897750000000002,
+      "gets": 25,
+      "heads": 0,
+      "latencies_ms": [
+        17.8825,
+        17.884708,
+        17.886499999999998,
+        17.888208,
+        17.889833,
+        17.891417,
+        17.893042,
+        17.894625
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 0,
+      "elapsed_ms": 55.5655,
+      "gets": 32,
+      "heads": 0,
+      "latencies_ms": [
+        55.550166999999995,
+        55.552499999999995,
+        55.554292,
+        55.556042,
+        55.557792,
+        55.559459,
+        55.561125000000004,
+        55.562833999999995
+      ],
+      "mode": "serial",
+      "puts": 40,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 0,
+      "elapsed_ms": 56.741167000000004,
+      "gets": 32,
+      "heads": 0,
+      "latencies_ms": [
+        56.720167000000004,
+        56.727125,
+        56.729042,
+        56.730958,
+        56.732791999999996,
+        56.734583,
+        56.736292,
+        56.738
+      ],
+      "mode": "serial",
+      "puts": 40,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 0,
+      "elapsed_ms": 17.98725,
+      "gets": 25,
+      "heads": 0,
+      "latencies_ms": [
+        17.968,
+        17.970833,
+        17.973083000000003,
+        17.975250000000003,
+        17.977415999999998,
+        17.979541,
+        17.981832999999998,
+        17.983958
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 77.513458,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        77.5085
+      ],
+      "mode": "serial",
+      "puts": 5,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 83.4935,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        83.482917
+      ],
+      "mode": "cohort",
+      "puts": 5,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 94.387417,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        94.38050000000001
+      ],
+      "mode": "cohort",
+      "puts": 5,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 85.30908299999999,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        85.301917
+      ],
+      "mode": "serial",
+      "puts": 5,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 96.322833,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        96.316625
+      ],
+      "mode": "serial",
+      "puts": 5,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 5,
+      "elapsed_ms": 106.51733300000001,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        106.501333
+      ],
+      "mode": "cohort",
+      "puts": 5,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 746.7623329999999,
+      "gets": 32,
+      "heads": 0,
+      "latencies_ms": [
+        88.61770800000001,
+        194.467333,
+        278.928875,
+        372.474333,
+        464.07329200000004,
+        558.77425,
+        657.048958,
+        746.754833
+      ],
+      "mode": "serial",
+      "puts": 40,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 101.3265,
+      "gets": 25,
+      "heads": 0,
+      "latencies_ms": [
+        101.290916,
+        101.29625,
+        101.30045799999999,
+        101.3045,
+        101.308708,
+        101.312666,
+        101.31675,
+        101.320791
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 104.86045800000001,
+      "gets": 25,
+      "heads": 0,
+      "latencies_ms": [
+        104.820291,
+        104.82600000000001,
+        104.83049999999999,
+        104.83516599999999,
+        104.839708,
+        104.843833,
+        104.84845800000001,
+        104.852666
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 591.016875,
+      "gets": 32,
+      "heads": 0,
+      "latencies_ms": [
+        74.26275,
+        148.113875,
+        221.43633300000002,
+        295.03175,
+        369.69383300000004,
+        444.381917,
+        517.800833,
+        591.013708
+      ],
+      "mode": "serial",
+      "puts": 40,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 726.79025,
+      "gets": 32,
+      "heads": 0,
+      "latencies_ms": [
+        91.545125,
+        180.87029099999998,
+        273.025333,
+        377.63345799999996,
+        469.573333,
+        546.0595000000001,
+        630.703625,
+        726.781083
+      ],
+      "mode": "serial",
+      "puts": 40,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 5,
+      "elapsed_ms": 85.4805,
+      "gets": 25,
+      "heads": 0,
+      "latencies_ms": [
+        85.46008400000001,
+        85.4635,
+        85.465834,
+        85.468084,
+        85.470292,
+        85.472459,
+        85.47458400000001,
+        85.476459
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 240.991625,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        240.97987500000002
+      ],
+      "mode": "serial",
+      "puts": 5,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 234.553166,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        234.5415
+      ],
+      "mode": "cohort",
+      "puts": 5,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 244.036583,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        244.017958
+      ],
+      "mode": "cohort",
+      "puts": 5,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 250.71933299999998,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        250.705791
+      ],
+      "mode": "serial",
+      "puts": 5,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 245.238,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        245.225125
+      ],
+      "mode": "serial",
+      "puts": 5,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 1,
+      "delay_ms": 20,
+      "elapsed_ms": 244.29625,
+      "gets": 4,
+      "heads": 0,
+      "latencies_ms": [
+        244.2795
+      ],
+      "mode": "cohort",
+      "puts": 5,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 1894.428792,
+      "gets": 32,
+      "heads": 0,
+      "latencies_ms": [
+        251.24625,
+        486.57516699999996,
+        719.293125,
+        957.888709,
+        1193.526167,
+        1425.2148339999999,
+        1659.493417,
+        1894.41525
+      ],
+      "mode": "serial",
+      "puts": 40,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 251.031292,
+      "gets": 25,
+      "heads": 0,
+      "latencies_ms": [
+        250.957625,
+        250.966167,
+        250.973583,
+        250.98054199999999,
+        250.99325,
+        251.00020800000001,
+        251.006542,
+        251.012958
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 0,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 215.328125,
+      "gets": 25,
+      "heads": 0,
+      "latencies_ms": [
+        215.308458,
+        215.311375,
+        215.31341600000002,
+        215.31537500000002,
+        215.317416,
+        215.319333,
+        215.32137500000002,
+        215.32333300000002
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 1689.0139159999999,
+      "gets": 32,
+      "heads": 0,
+      "latencies_ms": [
+        210.1215,
+        420.50320800000003,
+        628.585458,
+        841.459291,
+        1051.940208,
+        1265.216541,
+        1475.42525,
+        1689.0104999999999
+      ],
+      "mode": "serial",
+      "puts": 40,
+      "sample": 1,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 1683.03325,
+      "gets": 32,
+      "heads": 0,
+      "latencies_ms": [
+        206.590875,
+        411.713834,
+        623.81525,
+        840.6524589999999,
+        1049.962167,
+        1261.7890419999999,
+        1471.175334,
+        1683.029667
+      ],
+      "mode": "serial",
+      "puts": 40,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    },
+    {
+      "cells": 8,
+      "delay_ms": 20,
+      "elapsed_ms": 218.672333,
+      "gets": 25,
+      "heads": 0,
+      "latencies_ms": [
+        218.651917,
+        218.655417,
+        218.658083,
+        218.660292,
+        218.662333,
+        218.6645,
+        218.666417,
+        218.66825
+      ],
+      "mode": "cohort",
+      "puts": 12,
+      "sample": 2,
+      "kind": "enrollment_measurement"
+    }
+  ]
+}

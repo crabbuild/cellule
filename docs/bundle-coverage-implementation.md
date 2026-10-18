@@ -54,7 +54,7 @@ Uploading an immutable object supplies no coverage proof.
 
 | API or boundary | Behavior |
 | --- | --- |
-| `NodeDirectory::initialize_bundle_lane` / `bind_bundle_cell` | Establish a boot/epoch catalog; reserve a provisional inventory entry, pin the original Cell's base/code/schema/writer, then open it before issuing bundled commands |
+| `NodeDirectory::initialize_bundle_lane` / `bind_bundle_cell` / `bind_bundle_cells` | Establish a boot/epoch catalog; up to eight ready Cells share provisional/Open inventory publication while retaining their individual original base/code/schema/writer pins before SQL admission |
 | `NodeLogShipper::submit_assigned` / `NodeDurability::submit_assigned` | Use the existing bounded native shipping lane and return an opaque witness for every frame in a complete capture |
 | `prepare_node_bundle` / `select_node_bundle` | Reject missing, overlapping, unassigned or cross-binding ranges; verify origin extents; select the bundle and enrolled native coverage in one node CAS; reconcile only the exact head and coverage under the original lease |
 | `NodeDurability::confirm_bundle` | Confirm only the exact original assigned captures and lease locally, with no storage I/O or second authority CAS; reject cold reconstruction proofs and replacement gates or guards |
@@ -229,6 +229,7 @@ rewrite existing objects or discard recovery obligations.
 | Selected shard plus history encoded metadata | 4 MiB, checked before the respective reads |
 | Authenticated index header | 32 KiB / 256 shard references |
 | Original bindings per boot/epoch | 4,096 |
+| Enrollment cohort / waiting queue | 8 / 8 Cells |
 | Native frames per selection | 64 |
 | Detached exact frame references per Cell | 256 |
 | One encoded history | 32 KiB |
